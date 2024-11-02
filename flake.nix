@@ -106,14 +106,16 @@
       env-packages = pkgs:
         (with pkgs; [
           pkg-config
+          # curl
+          # fswatch
+          # imagemagick
+          # glslang
+          # shaderc
+
           zig
+
           zls
           gdb
-          curl
-          fswatch
-          imagemagick
-          glslang
-          shaderc
 
           # - [nixOS usage | Mach: zig game engine & graphics toolkit](https://machengine.org/about/nixos-usage/)
           xorg.libX11

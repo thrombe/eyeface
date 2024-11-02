@@ -1,5 +1,14 @@
 const std = @import("std");
 
+const c = @cImport({
+    @cDefine("GLFW_INCLUDE_VULKAN", "1");
+    @cDefine("GLFW_INCLUDE_NONE", "1");
+    @cInclude("GLFW/glfw3.h");
+    @cInclude("GLFW/glfw3native.h");
+});
+
+const vk = @import("vulkan");
+
 pub fn main() !void {
     // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
     std.debug.print("All your {s} are belong to us.\n", .{"codebase"});

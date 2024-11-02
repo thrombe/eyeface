@@ -10,9 +10,22 @@
         //    .hash = "...",
         //    .lazy = false,
         //},
+        .vulkan_headers = .{
+            .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v1.3.300.tar.gz",
+            .hash = "1220baf3b47dcd52522e25f15090fd0ca5860716c7f88a339f8ef34b6c9a49548951",
+        },
+        .vulkan_zig = .{
+            .url = "https://github.com/Snektron/vulkan-zig/archive/e43d635893de4c8b89d5ca8aa142984872b7e68f.tar.gz",
+            .hash = "122064f889ea10097a67fc28744fe95d0bfde9af252de147a9b90aa55cecfc30c01c",
+        },
+        .glfw = .{
+            // .url = "https://github.com/glfw/glfw/archive/refs/tags/3.4.tar.gz",
+            // .hash = "1220c46ebcac607065f942193b82a21b87213fca4b0d50c83461f8f5e22955fcb88f",
+
+            .url = "https://github.com/slimsag/glfw/archive/e6f377baed70a7bef9fa08d808f40b64c5136bf6.tar.gz",
+            .hash = "1220c15e66c13f9633fcfd50b5ed265f74f2950c98b1f1defd66298fa027765e0190",
+        },
     },
 
-    .paths = .{
-        ""
-    },
+    .paths = .{""},
 }

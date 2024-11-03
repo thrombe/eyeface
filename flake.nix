@@ -109,11 +109,13 @@
           # curl
           # fswatch
           # imagemagick
-          # glslang
-          # shaderc
+          glslang
+          shaderc
 
           glfw
           vulkan-headers
+          # libxkbcommon
+          # wayland
 
           zig
 

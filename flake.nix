@@ -112,6 +112,9 @@
           # glslang
           # shaderc
 
+          glfw
+          vulkan-headers
+
           zig
 
           zls

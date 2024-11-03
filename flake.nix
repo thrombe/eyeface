@@ -107,8 +107,8 @@
         (with pkgs; [
           pkg-config
           # curl
-          # fswatch
-          # imagemagick
+          fswatch
+          imagemagick
           glslang
           shaderc
 

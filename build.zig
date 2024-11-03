@@ -25,6 +25,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     exe.root_module.addImport("vulkan", vulkan_zig);
+    exe.linkSystemLibrary("fswatch");
+    exe.linkSystemLibrary2("ImageMagick", .{});
+    exe.linkSystemLibrary2("MagickWand", .{});
+    exe.linkSystemLibrary2("MagickCore", .{});
+
     // exe.root_module.linkLibrary(glfw.artifact("glfw"));
     // @import("glfw").addPaths(&exe.root_module);
     exe.linkSystemLibrary("glfw");

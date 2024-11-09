@@ -114,6 +114,7 @@
 
           glfw
           vulkan-headers
+          vulkan-validation-layers
           # libxkbcommon
           # wayland
 

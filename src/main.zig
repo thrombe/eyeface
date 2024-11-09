@@ -157,6 +157,11 @@ const Engine = struct {
                 vk.features.version_1_3,
                 vk.extensions.khr_surface,
                 vk.extensions.khr_swapchain,
+
+                // EH: ?what are these
+                // vk.extensions.ext_validation_features,
+                // vk.extensions.ext_validation_flags,
+                // vk.extensions.ext_validation_cache,
             };
 
             const BaseDispatch = vk.BaseWrapper(apis);
@@ -185,6 +190,9 @@ const Engine = struct {
 
             var glfw_exts_count: u32 = 0;
             const glfw_exts = c.glfwGetRequiredInstanceExtensions(&glfw_exts_count);
+            const layers = [_][*c]const u8{
+                "VK_LAYER_KHRONOS_validation",
+            };
             const instance = vkb.createInstance(&.{
                 .p_application_info = &.{
                     .p_application_name = "yaaaaaaaaaaaaaaa",
@@ -194,6 +202,8 @@ const Engine = struct {
                 },
                 .enabled_extension_count = glfw_exts_count,
                 .pp_enabled_extension_names = @ptrCast(glfw_exts),
+                .enabled_layer_count = @intCast(layers.len),
+                .pp_enabled_layer_names = @ptrCast(&layers),
             }, null) catch |e| {
                 std.debug.print("{any}\n", .{e});
                 return e;

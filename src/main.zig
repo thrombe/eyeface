@@ -10,6 +10,7 @@ const c = @cImport({
 const vk = @import("vulkan");
 
 const utils = @import("utils.zig");
+const Fuse = utils.Fuse;
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 pub const allocator = gpa.allocator();
@@ -44,6 +45,7 @@ const Engine = struct {
         // last known size
         extent: vk.Extent2D = .{ .width = 800, .height = 600 },
         handle: *c.GLFWwindow,
+        resize_fuse: Fuse = .{},
 
         const Event = union(enum) {
             Resize: struct {
@@ -62,6 +64,7 @@ const Engine = struct {
 
             fn resize(_: ?*c.GLFWwindow, width: c_int, height: c_int) callconv(.C) void {
                 global_window.extent = .{ .width = @intCast(width), .height = @intCast(height) };
+                _ = global_window.resize_fuse.fuse();
             }
         };
 
@@ -1144,9 +1147,11 @@ pub fn main() !void {
                 std.debug.print("{any}\n", .{state});
             }
 
-            // if (state == .suboptimal) {
-            //     engine.swapchain.recreate(engine.window.extent);
-            // }
+            if (engine.window.resize_fuse.unfuse() or state == .suboptimal) {
+                // renderer.swapchain.recreate(engine.window.extent);
+                renderer.deinit(&engine.graphics.device);
+                renderer = try Renderer.init(&engine);
+            }
             // destroyFramebuffers(&gc, framebuffers);
             // framebuffers = try createFramebuffers(&gc, render_pass, swapchain);
 

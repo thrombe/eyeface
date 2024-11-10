@@ -37,7 +37,7 @@ const Engine = struct {
     }
 
     fn wait(self: *@This()) !void {
-        _ = self;
+        try self.graphics.device.deviceWaitIdle();
     }
 
     fn deinit(self: *@This()) void {

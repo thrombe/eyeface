@@ -408,6 +408,7 @@ const Renderer = struct {
     // framebuffers are objects containing views of swapchain images
     framebuffers: []vk.Framebuffer,
     command_pool: vk.CommandPool,
+    vertex_buffer_memory: vk.DeviceMemory,
     vertex_buffer: vk.Buffer,
     // command buffers are recordings of a bunch of commands that a gpu can execute
     command_buffers: []vk.CommandBuffer,
@@ -680,9 +681,10 @@ const Renderer = struct {
 
             try copyBuffer(ctx, device, pool, buffer, staging_buffer, @sizeOf(@TypeOf(vertices)));
 
-            break :blk buffer;
+            break :blk .{ .buffer = buffer, .memory = memory };
         };
-        errdefer device.destroyBuffer(vertex_buffer, null);
+        errdefer device.destroyBuffer(vertex_buffer.buffer, null);
+        errdefer device.freeMemory(vertex_buffer.memory, null);
 
         const command_buffers = blk: {
             const cmdbufs = try allocator.alloc(vk.CommandBuffer, framebuffers.len);
@@ -752,6 +754,7 @@ const Renderer = struct {
             .pipeline = pipeline,
             .framebuffers = framebuffers,
             .command_pool = pool,
+            .vertex_buffer_memory = vertex_buffer.memory,
             .vertex_buffer = vertex_buffer.buffer,
             .command_buffers = command_buffers,
         };
@@ -763,6 +766,7 @@ const Renderer = struct {
         allocator.free(self.command_buffers);
 
         device.destroyBuffer(self.vertex_buffer, null);
+        device.freeMemory(self.vertex_buffer_memory, null);
         device.destroyCommandPool(self.command_pool, null);
 
         for (self.framebuffers) |fb| device.destroyFramebuffer(fb, null);

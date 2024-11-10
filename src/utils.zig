@@ -499,7 +499,7 @@ pub const ImageMagick = struct {
     }
 };
 
-const Glslc = struct {
+pub const Glslc = struct {
     pub const Compiler = struct {
         pub const Opt = enum {
             none,

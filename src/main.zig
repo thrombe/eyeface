@@ -32,10 +32,6 @@ const Engine = struct {
         };
     }
 
-    fn wait(self: *@This()) !void {
-        try self.graphics.device.deviceWaitIdle();
-    }
-
     fn deinit(self: *@This()) void {
         self.graphics.deinit();
         self.window.deinit();
@@ -448,8 +444,59 @@ const Renderer = struct {
     };
 
     fn init(engine: *Engine) !@This() {
-        const vert_spv align(@alignOf(u32)) = @embedFile("vertex_shader").*;
-        const frag_spv align(@alignOf(u32)) = @embedFile("fragment_shader").*;
+        var compiler = utils.Glslc.Compiler{ .opt = .fast, .env = .vulkan1_3 };
+        const vert_spv = blk: {
+            compiler.stage = .vertex;
+            const vert: utils.Glslc.Compiler.Code = .{ .path = .{
+                .main = "./src/vert.glsl",
+                .include = &[_][]const u8{},
+                .definitions = &[_][]const u8{},
+            } };
+            // _ = compiler.dump_assembly(allocator, &vert);
+            const res = try compiler.compile(
+                allocator,
+                &vert,
+                .spirv,
+            );
+            switch (res) {
+                .Err => |msg| {
+                    std.debug.print("{s}\n", .{msg.msg});
+                    allocator.free(msg.msg);
+                    return msg.err;
+                },
+                .Ok => |ok| {
+                    errdefer allocator.free(ok);
+                    break :blk ok;
+                },
+            }
+        };
+        defer allocator.free(vert_spv);
+        const frag_spv = blk: {
+            compiler.stage = .fragment;
+            const frag: utils.Glslc.Compiler.Code = .{ .path = .{
+                .main = "./src/frag.glsl",
+                .include = &[_][]const u8{},
+                .definitions = &[_][]const u8{},
+            } };
+            // _ = compiler.dump_assembly(allocator, &frag);
+            const res = try compiler.compile(
+                allocator,
+                &frag,
+                .spirv,
+            );
+            switch (res) {
+                .Err => |msg| {
+                    std.debug.print("{s}\n", .{msg.msg});
+                    allocator.free(msg.msg);
+                    return msg.err;
+                },
+                .Ok => |ok| {
+                    errdefer allocator.free(ok);
+                    break :blk ok;
+                },
+            }
+        };
+        defer allocator.free(frag_spv);
 
         var ctx = &engine.graphics;
         const device = &ctx.device;
@@ -499,14 +546,14 @@ const Renderer = struct {
 
         const pipeline = blk: {
             const vert = try device.createShaderModule(&.{
-                .code_size = vert_spv.len,
-                .p_code = @ptrCast(&vert_spv),
+                .code_size = vert_spv.len * @sizeOf(u32),
+                .p_code = @ptrCast(vert_spv.ptr),
             }, null);
             defer device.destroyShaderModule(vert, null);
 
             const frag = try device.createShaderModule(&.{
-                .code_size = frag_spv.len,
-                .p_code = @ptrCast(&frag_spv),
+                .code_size = frag_spv.len * @sizeOf(u32),
+                .p_code = @ptrCast(frag_spv.ptr),
             }, null);
             defer device.destroyShaderModule(frag, null);
 
@@ -1142,33 +1189,19 @@ pub fn main() !void {
             }
 
             const state = try renderer.present(&engine.graphics);
-            // _ = state;
+            // IDK: this never triggers :/
             if (state == .suboptimal) {
                 std.debug.print("{any}\n", .{state});
             }
 
             if (engine.window.resize_fuse.unfuse() or state == .suboptimal) {
-                // renderer.swapchain.recreate(engine.window.extent);
                 renderer.deinit(&engine.graphics.device);
                 renderer = try Renderer.init(&engine);
             }
-            // destroyFramebuffers(&gc, framebuffers);
-            // framebuffers = try createFramebuffers(&gc, render_pass, swapchain);
-
-            // destroyCommandBuffers(&gc, pool, cmdbufs);
-            // cmdbufs = try createCommandBuffers(
-            //     &gc,
-            //     pool,
-            //     buffer,
-            //     swapchain.extent,
-            //     render_pass,
-            //     pipeline,
-            //     framebuffers,
-            // );
         }
 
         try renderer.swapchain.waitForAllFences(&engine.graphics.device);
-        try engine.wait();
+        try engine.graphics.device.deviceWaitIdle();
     }
 
     // no defer cuz we don't want to print leaks when we error out

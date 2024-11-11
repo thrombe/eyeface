@@ -401,6 +401,12 @@ const Engine = struct {
 
 const Renderer = struct {
     swapchain: Swapchain,
+    uniforms: Uniforms,
+    uniform_buffers: []vk.Buffer,
+    uniform_memories: []vk.DeviceMemory,
+    descriptor_pool: vk.DescriptorPool,
+    descriptor_set_layout: vk.DescriptorSetLayout,
+    descriptor_sets: []vk.DescriptorSet,
     pass: vk.RenderPass,
     pipeline_layout: vk.PipelineLayout,
     pipeline: vk.Pipeline,
@@ -437,8 +443,109 @@ const Renderer = struct {
         pos: [2]f32,
         color: [3]f32,
     };
+    const Uniforms = extern struct {
+        a: f32 = 0,
+        b: f32 = 0,
+    };
 
     fn init(engine: *Engine) !@This() {
+        var ctx = &engine.graphics;
+        const device = &ctx.device;
+
+        var swapchain = try Swapchain.init(ctx, engine.window.extent);
+        errdefer swapchain.deinit(device);
+
+        const uniform_buffers = try allocator.alloc(vk.Buffer, swapchain.swap_images.len);
+        var i: usize = 0;
+        errdefer {
+            for (uniform_buffers[0..i]) |buf| {
+                device.destroyBuffer(buf, null);
+            }
+        }
+        for (uniform_buffers) |*buf| {
+            buf.* = try device.createBuffer(&.{
+                .size = @sizeOf(Uniforms),
+                .usage = .{
+                    .uniform_buffer_bit = true,
+                },
+                .sharing_mode = .exclusive,
+            }, null);
+            i += 1;
+        }
+        const uniform_buffer_memories = try allocator.alloc(vk.DeviceMemory, swapchain.swap_images.len);
+        var j: usize = 0;
+        errdefer {
+            for (uniform_buffer_memories[0..j]) |mem| {
+                device.freeMemory(mem, null);
+            }
+        }
+        for (uniform_buffer_memories, uniform_buffers) |*mem, buf| {
+            const uniform_mem_req = device.getBufferMemoryRequirements(buf);
+            mem.* = try ctx.allocate(uniform_mem_req, .{
+                .host_visible_bit = true,
+                .host_coherent_bit = true,
+            });
+            j += 1;
+            try device.bindBufferMemory(buf, mem.*, 0);
+        }
+
+        const desc_set_layout = try device.createDescriptorSetLayout(&.{
+            .flags = .{},
+            .binding_count = 1,
+            .p_bindings = &[_]vk.DescriptorSetLayoutBinding{
+                .{
+                    .binding = 0,
+                    .descriptor_type = .uniform_buffer,
+                    .descriptor_count = 1,
+                    .stage_flags = .{
+                        .vertex_bit = true,
+                        .fragment_bit = true,
+                        .compute_bit = true,
+                    },
+                },
+            },
+        }, null);
+        errdefer device.destroyDescriptorSetLayout(desc_set_layout, null);
+        const desc_pool = try device.createDescriptorPool(&.{
+            .max_sets = @intCast(swapchain.swap_images.len),
+            .pool_size_count = 1,
+            .p_pool_sizes = &[_]vk.DescriptorPoolSize{.{
+                .type = .uniform_buffer,
+                .descriptor_count = @intCast(swapchain.swap_images.len),
+            }},
+        }, null);
+        errdefer device.destroyDescriptorPool(desc_pool, null);
+        const desc_set_layouts = try allocator.alloc(vk.DescriptorSetLayout, swapchain.swap_images.len);
+        defer allocator.free(desc_set_layouts);
+        for (desc_set_layouts) |*layout| {
+            layout.* = desc_set_layout;
+        }
+        const desc_sets = try allocator.alloc(vk.DescriptorSet, swapchain.swap_images.len);
+        errdefer allocator.free(desc_sets);
+        try device.allocateDescriptorSets(&.{
+            .descriptor_pool = desc_pool,
+            .descriptor_set_count = @intCast(desc_set_layouts.len),
+            .p_set_layouts = desc_set_layouts.ptr,
+        }, desc_sets.ptr);
+        for (desc_sets, uniform_buffers) |set, buf| {
+            device.updateDescriptorSets(1, &[_]vk.WriteDescriptorSet{.{
+                .dst_set = set,
+                .dst_binding = 0,
+                .dst_array_element = 0,
+                .descriptor_count = 1,
+                .descriptor_type = .uniform_buffer,
+                .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                    .buffer = buf,
+                    .offset = 0,
+                    .range = @sizeOf(Uniforms),
+                }},
+
+                // OOF: ??
+                .p_image_info = undefined,
+                .p_texel_buffer_view = undefined,
+            }}, 0, null);
+        }
+
         var compiler = utils.Glslc.Compiler{ .opt = .fast, .env = .vulkan1_3 };
         const vert_spv = blk: {
             compiler.stage = .vertex;
@@ -493,11 +600,6 @@ const Renderer = struct {
         };
         defer allocator.free(frag_spv);
 
-        var ctx = &engine.graphics;
-        const device = &ctx.device;
-        var swapchain = try Swapchain.init(ctx, engine.window.extent);
-        errdefer swapchain.deinit(device);
-
         const pass = blk: {
             const color_attachment = vk.AttachmentDescription{
                 .format = swapchain.surface_format.format,
@@ -532,8 +634,8 @@ const Renderer = struct {
 
         const pipeline_layout = try device.createPipelineLayout(&.{
             .flags = .{},
-            .set_layout_count = 0,
-            .p_set_layouts = undefined,
+            .set_layout_count = 1,
+            .p_set_layouts = @ptrCast(&desc_set_layout),
             .push_constant_range_count = 0,
             .p_push_constant_ranges = undefined,
         }, null);
@@ -667,18 +769,18 @@ const Renderer = struct {
             const framebuffers = try allocator.alloc(vk.Framebuffer, swapchain.swap_images.len);
             errdefer allocator.free(framebuffers);
 
-            var i: usize = 0;
-            errdefer for (framebuffers[0..i]) |fb| device.destroyFramebuffer(fb, null);
+            var i_2: usize = 0;
+            errdefer for (framebuffers[0..i_2]) |fb| device.destroyFramebuffer(fb, null);
             for (framebuffers) |*fb| {
                 fb.* = try device.createFramebuffer(&.{
                     .render_pass = pass,
                     .attachment_count = 1,
-                    .p_attachments = @ptrCast(&swapchain.swap_images[i].view),
+                    .p_attachments = @ptrCast(&swapchain.swap_images[i_2].view),
                     .width = swapchain.extent.width,
                     .height = swapchain.extent.height,
                     .layers = 1,
                 }, null);
-                i += 1;
+                i_2 += 1;
             }
 
             break :blk framebuffers;
@@ -786,7 +888,7 @@ const Renderer = struct {
                 .extent = swapchain.extent,
             };
 
-            for (cmdbufs, framebuffers) |cmdbuf, framebuffer| {
+            for (cmdbufs, framebuffers, desc_sets) |cmdbuf, framebuffer, desc_set| {
                 try device.beginCommandBuffer(cmdbuf, &.{});
 
                 device.cmdSetViewport(cmdbuf, 0, 1, @ptrCast(&viewport));
@@ -806,6 +908,7 @@ const Renderer = struct {
                 device.cmdBindPipeline(cmdbuf, .graphics, pipeline);
                 const offset = [_]vk.DeviceSize{0};
                 device.cmdBindVertexBuffers(cmdbuf, 0, 1, @ptrCast(&vertex_buffer.buffer), &offset);
+                device.cmdBindDescriptorSets(cmdbuf, .graphics, pipeline_layout, 0, 1, @ptrCast(&desc_set), 0, null);
                 device.cmdDraw(cmdbuf, @intCast(vertices.items.len), 1, 0, 0);
 
                 device.cmdEndRenderPass(cmdbuf);
@@ -821,6 +924,12 @@ const Renderer = struct {
 
         return .{
             .swapchain = swapchain,
+            .uniforms = .{},
+            .uniform_buffers = uniform_buffers,
+            .uniform_memories = uniform_buffer_memories,
+            .descriptor_set_layout = desc_set_layout,
+            .descriptor_pool = desc_pool,
+            .descriptor_sets = desc_sets,
             .pass = pass,
             .pipeline_layout = pipeline_layout,
             .pipeline = pipeline,
@@ -834,26 +943,43 @@ const Renderer = struct {
 
     fn deinit(self: *@This(), device: *Device) void {
         try self.swapchain.waitForAllFences(device);
-        device.freeCommandBuffers(self.command_pool, @truncate(self.command_buffers.len), self.command_buffers.ptr);
-        allocator.free(self.command_buffers);
 
-        device.destroyBuffer(self.vertex_buffer, null);
-        device.freeMemory(self.vertex_buffer_memory, null);
-        device.destroyCommandPool(self.command_pool, null);
+        defer self.swapchain.deinit(device);
 
-        for (self.framebuffers) |fb| device.destroyFramebuffer(fb, null);
-        allocator.free(self.framebuffers);
+        defer {
+            for (self.uniform_buffers) |buf| device.destroyBuffer(buf, null);
+            allocator.free(self.uniform_buffers);
+            for (self.uniform_memories) |mem| device.freeMemory(mem, null);
+            allocator.free(self.uniform_memories);
+        }
+        defer device.destroyDescriptorSetLayout(self.descriptor_set_layout, null);
+        defer device.destroyDescriptorPool(self.descriptor_pool, null);
+        defer allocator.free(self.descriptor_sets);
 
-        device.destroyPipeline(self.pipeline, null);
-        device.destroyPipelineLayout(self.pipeline_layout, null);
-        device.destroyRenderPass(self.pass, null);
-        self.swapchain.deinit(device);
+        defer device.destroyRenderPass(self.pass, null);
+        defer device.destroyPipelineLayout(self.pipeline_layout, null);
+        defer device.destroyPipeline(self.pipeline, null);
+
+        defer {
+            for (self.framebuffers) |fb| device.destroyFramebuffer(fb, null);
+            allocator.free(self.framebuffers);
+        }
+        defer device.destroyCommandPool(self.command_pool, null);
+        defer {
+            device.destroyBuffer(self.vertex_buffer, null);
+            device.freeMemory(self.vertex_buffer_memory, null);
+        }
+        defer {
+            device.freeCommandBuffers(self.command_pool, @truncate(self.command_buffers.len), self.command_buffers.ptr);
+            allocator.free(self.command_buffers);
+        }
     }
 
     fn present(self: *@This(), ctx: *Engine.VulkanContext) !Swapchain.PresentState {
         const cmdbuf = self.command_buffers[self.swapchain.image_index];
+        const uniform_mem = &self.uniform_memories[self.swapchain.image_index];
 
-        return self.swapchain.present(cmdbuf, ctx) catch |err| switch (err) {
+        return self.swapchain.present(cmdbuf, ctx, &self.uniforms, uniform_mem) catch |err| switch (err) {
             error.OutOfDateKHR => return .suboptimal,
             else => |narrow| return narrow,
         };
@@ -1075,7 +1201,7 @@ const Renderer = struct {
             return &self.swap_images[self.image_index];
         }
 
-        pub fn present(self: *Swapchain, cmdbuf: vk.CommandBuffer, ctx: *Engine.VulkanContext) !PresentState {
+        pub fn present(self: *Swapchain, cmdbuf: vk.CommandBuffer, ctx: *Engine.VulkanContext, uniforms: *Uniforms, uniform_memory: *vk.DeviceMemory) !PresentState {
             // Simple method:
             // 1) Acquire next image
             // 2) Wait for and reset fence of the acquired image
@@ -1097,6 +1223,14 @@ const Renderer = struct {
             const current = self.currentSwapImage();
             try current.waitForFence(&ctx.device);
             try ctx.device.resetFences(1, @ptrCast(&current.frame_fence));
+
+            {
+                const maybe_mapped = try ctx.device.mapMemory(uniform_memory.*, 0, @sizeOf(@TypeOf(uniforms.*)), .{});
+                const mapped = maybe_mapped orelse return error.MappingMemoryFailed;
+                defer ctx.device.unmapMemory(uniform_memory.*);
+
+                @memcpy(@as([*]u8, @ptrCast(mapped)), std.mem.asBytes(uniforms));
+            }
 
             // Step 2: Submit the command buffer
             const wait_stage = [_]vk.PipelineStageFlags{.{ .top_of_pipe_bit = true }};

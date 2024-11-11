@@ -2,6 +2,28 @@ const std = @import("std");
 const main = @import("main.zig");
 const allocator = main.allocator;
 
+pub const Vec4 = struct {
+    x: f32 = 0,
+    y: f32 = 0,
+    z: f32 = 0,
+    w: f32 = 0,
+
+    pub fn to_buf(self: *const @This()) [4]f32 {
+        return .{ self.x, self.y, self.z, self.w };
+    }
+
+    pub fn gamma_correct_inv(self: @This()) @This() {
+        // const p: f32 = 1.0 / 2.2;
+        const p: f32 = 2.2;
+        return .{
+            .x = std.math.pow(f32, self.x, p),
+            .y = std.math.pow(f32, self.y, p),
+            .z = std.math.pow(f32, self.z, p),
+            .w = std.math.pow(f32, self.w, p),
+        };
+    }
+};
+
 pub const ColorParse = struct {
     pub fn hex_rgba(typ: type, comptime hex: []const u8) typ {
         if (hex.len != 9 or hex[0] != '#') {

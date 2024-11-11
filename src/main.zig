@@ -437,11 +437,6 @@ const Renderer = struct {
         pos: [2]f32,
         color: [3]f32,
     };
-    const vertices = [_]Vertex{
-        .{ .pos = .{ 0, -0.5 }, .color = .{ 1, 0, 0 } },
-        .{ .pos = .{ 0.5, 0.5 }, .color = .{ 0, 1, 0 } },
-        .{ .pos = .{ -0.5, 0.5 }, .color = .{ 0, 0, 1 } },
-    };
 
     fn init(engine: *Engine) !@This() {
         var compiler = utils.Glslc.Compiler{ .opt = .fast, .env = .vulkan1_3 };
@@ -592,8 +587,8 @@ const Renderer = struct {
             const prsci = vk.PipelineRasterizationStateCreateInfo{
                 .depth_clamp_enable = vk.FALSE,
                 .rasterizer_discard_enable = vk.FALSE,
-                .polygon_mode = .fill,
-                .cull_mode = .{ .back_bit = true },
+                .polygon_mode = .point,
+                .cull_mode = .{ .back_bit = false },
                 .front_face = .clockwise,
                 .depth_bias_enable = vk.FALSE,
                 .depth_bias_constant_factor = 0,
@@ -698,9 +693,34 @@ const Renderer = struct {
         }, null);
         errdefer device.destroyCommandPool(pool, null);
 
+        var vertices = std.ArrayList(Vertex).init(allocator);
+        defer vertices.deinit();
+        var rng = std.Random.DefaultPrng.init(0);
+        const p1 = utils.Vec4{ .x = 0, .y = -0.5 };
+        const p2 = utils.Vec4{ .x = 0.5, .y = 0.5 };
+        const p3 = utils.Vec4{ .x = -0.5, .y = 0.5 };
+        for (0..10000) |_| {
+            var pos = utils.Vec4{};
+            for (0..10) |_| {
+                const p = switch (rng.next() % 3) {
+                    0 => p1,
+                    1 => p2,
+                    2 => p3,
+                    else => unreachable,
+                };
+                pos.x += p.x;
+                pos.x /= 2.0;
+                pos.y += p.y;
+                pos.y /= 2.0;
+            }
+            try vertices.append(.{ .pos = .{ pos.x, pos.y }, .color = .{ 1, 1, 1 } });
+        }
+        // try vertices.append(.{ .pos = .{ 0, -0.5 }, .color = .{ 1, 1, 1 } });
+        // try vertices.append(.{ .pos = .{ 0.5, 0.5 }, .color = .{ 1, 1, 1 } });
+        // try vertices.append(.{ .pos = .{ -0.5, 0.5 }, .color = .{ 1, 1, 1 } });
         const vertex_buffer = blk: {
             const buffer = try device.createBuffer(&.{
-                .size = @sizeOf(@TypeOf(vertices)),
+                .size = @sizeOf(Vertex) * vertices.items.len,
                 .usage = .{ .transfer_dst_bit = true, .vertex_buffer_bit = true },
                 .sharing_mode = .exclusive,
             }, null);
@@ -711,7 +731,7 @@ const Renderer = struct {
             try device.bindBufferMemory(buffer, memory, 0);
 
             const staging_buffer = try device.createBuffer(&.{
-                .size = @sizeOf(@TypeOf(vertices)),
+                .size = @sizeOf(Vertex) * vertices.items.len,
                 .usage = .{ .transfer_src_bit = true },
                 .sharing_mode = .exclusive,
             }, null);
@@ -726,10 +746,10 @@ const Renderer = struct {
                 defer device.unmapMemory(staging_memory);
 
                 const gpu_vertices: [*]Vertex = @ptrCast(@alignCast(data));
-                @memcpy(gpu_vertices, vertices[0..]);
+                @memcpy(gpu_vertices, vertices.items);
             }
 
-            try copyBuffer(ctx, device, pool, buffer, staging_buffer, @sizeOf(@TypeOf(vertices)));
+            try copyBuffer(ctx, device, pool, buffer, staging_buffer, @sizeOf(Vertex) * vertices.items.len);
 
             break :blk .{ .buffer = buffer, .memory = memory };
         };
@@ -748,7 +768,9 @@ const Renderer = struct {
             errdefer device.freeCommandBuffers(pool, @intCast(cmdbufs.len), cmdbufs.ptr);
 
             const clear = vk.ClearValue{
-                .color = .{ .float_32 = .{ 0, 0, 0, 1 } },
+                .color = .{
+                    .float_32 = utils.ColorParse.hex_xyzw(utils.Vec4, "#282828ff").gamma_correct_inv().to_buf(),
+                },
             };
 
             const viewport = vk.Viewport{
@@ -784,7 +806,7 @@ const Renderer = struct {
                 device.cmdBindPipeline(cmdbuf, .graphics, pipeline);
                 const offset = [_]vk.DeviceSize{0};
                 device.cmdBindVertexBuffers(cmdbuf, 0, 1, @ptrCast(&vertex_buffer.buffer), &offset);
-                device.cmdDraw(cmdbuf, vertices.len, 1, 0, 0);
+                device.cmdDraw(cmdbuf, @intCast(vertices.items.len), 1, 0, 0);
 
                 device.cmdEndRenderPass(cmdbuf);
                 try device.endCommandBuffer(cmdbuf);

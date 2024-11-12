@@ -402,11 +402,11 @@ const Engine = struct {
 const Renderer = struct {
     swapchain: Swapchain,
     uniforms: Uniforms,
-    uniform_buffers: []vk.Buffer,
-    uniform_memories: []vk.DeviceMemory,
+    uniform_buffer: vk.Buffer,
+    uniform_memory: vk.DeviceMemory,
     descriptor_pool: vk.DescriptorPool,
     descriptor_set_layout: vk.DescriptorSetLayout,
-    descriptor_sets: []vk.DescriptorSet,
+    descriptor_set: vk.DescriptorSet,
     pass: vk.RenderPass,
     pipeline_layout: vk.PipelineLayout,
     pipeline: vk.Pipeline,
@@ -455,39 +455,21 @@ const Renderer = struct {
         var swapchain = try Swapchain.init(ctx, engine.window.extent);
         errdefer swapchain.deinit(device);
 
-        const uniform_buffers = try allocator.alloc(vk.Buffer, swapchain.swap_images.len);
-        var i: usize = 0;
-        errdefer {
-            for (uniform_buffers[0..i]) |buf| {
-                device.destroyBuffer(buf, null);
-            }
-        }
-        for (uniform_buffers) |*buf| {
-            buf.* = try device.createBuffer(&.{
-                .size = @sizeOf(Uniforms),
-                .usage = .{
-                    .uniform_buffer_bit = true,
-                },
-                .sharing_mode = .exclusive,
-            }, null);
-            i += 1;
-        }
-        const uniform_buffer_memories = try allocator.alloc(vk.DeviceMemory, swapchain.swap_images.len);
-        var j: usize = 0;
-        errdefer {
-            for (uniform_buffer_memories[0..j]) |mem| {
-                device.freeMemory(mem, null);
-            }
-        }
-        for (uniform_buffer_memories, uniform_buffers) |*mem, buf| {
-            const uniform_mem_req = device.getBufferMemoryRequirements(buf);
-            mem.* = try ctx.allocate(uniform_mem_req, .{
-                .host_visible_bit = true,
-                .host_coherent_bit = true,
-            });
-            j += 1;
-            try device.bindBufferMemory(buf, mem.*, 0);
-        }
+        const uniform_buffer = try device.createBuffer(&.{
+            .size = @sizeOf(Uniforms),
+            .usage = .{
+                .uniform_buffer_bit = true,
+            },
+            .sharing_mode = .exclusive,
+        }, null);
+        errdefer device.destroyBuffer(uniform_buffer, null);
+        const uniform_mem_req = device.getBufferMemoryRequirements(uniform_buffer);
+        const uniform_buffer_memory = try ctx.allocate(uniform_mem_req, .{
+            .host_visible_bit = true,
+            .host_coherent_bit = true,
+        });
+        errdefer device.freeMemory(uniform_buffer_memory, null);
+        try device.bindBufferMemory(uniform_buffer, uniform_buffer_memory, 0);
 
         const desc_set_layout = try device.createDescriptorSetLayout(&.{
             .flags = .{},
@@ -507,7 +489,7 @@ const Renderer = struct {
         }, null);
         errdefer device.destroyDescriptorSetLayout(desc_set_layout, null);
         const desc_pool = try device.createDescriptorPool(&.{
-            .max_sets = @intCast(swapchain.swap_images.len),
+            .max_sets = 1,
             .pool_size_count = 1,
             .p_pool_sizes = &[_]vk.DescriptorPoolSize{.{
                 .type = .uniform_buffer,
@@ -515,36 +497,28 @@ const Renderer = struct {
             }},
         }, null);
         errdefer device.destroyDescriptorPool(desc_pool, null);
-        const desc_set_layouts = try allocator.alloc(vk.DescriptorSetLayout, swapchain.swap_images.len);
-        defer allocator.free(desc_set_layouts);
-        for (desc_set_layouts) |*layout| {
-            layout.* = desc_set_layout;
-        }
-        const desc_sets = try allocator.alloc(vk.DescriptorSet, swapchain.swap_images.len);
-        errdefer allocator.free(desc_sets);
+        var desc_set: vk.DescriptorSet = undefined;
         try device.allocateDescriptorSets(&.{
             .descriptor_pool = desc_pool,
-            .descriptor_set_count = @intCast(desc_set_layouts.len),
-            .p_set_layouts = desc_set_layouts.ptr,
-        }, desc_sets.ptr);
-        for (desc_sets, uniform_buffers) |set, buf| {
-            device.updateDescriptorSets(1, &[_]vk.WriteDescriptorSet{.{
-                .dst_set = set,
-                .dst_binding = 0,
-                .dst_array_element = 0,
-                .descriptor_count = 1,
-                .descriptor_type = .uniform_buffer,
-                .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
-                    .buffer = buf,
-                    .offset = 0,
-                    .range = @sizeOf(Uniforms),
-                }},
+            .descriptor_set_count = 1,
+            .p_set_layouts = @ptrCast(&desc_set_layout),
+        }, @ptrCast(&desc_set));
+        device.updateDescriptorSets(1, &[_]vk.WriteDescriptorSet{.{
+            .dst_set = desc_set,
+            .dst_binding = 0,
+            .dst_array_element = 0,
+            .descriptor_count = 1,
+            .descriptor_type = .uniform_buffer,
+            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                .buffer = uniform_buffer,
+                .offset = 0,
+                .range = @sizeOf(Uniforms),
+            }},
 
-                // OOF: ??
-                .p_image_info = undefined,
-                .p_texel_buffer_view = undefined,
-            }}, 0, null);
-        }
+            // OOF: ??
+            .p_image_info = undefined,
+            .p_texel_buffer_view = undefined,
+        }}, 0, null);
 
         var compiler = utils.Glslc.Compiler{ .opt = .fast, .env = .vulkan1_3 };
         const vert_spv = blk: {
@@ -888,7 +862,7 @@ const Renderer = struct {
                 .extent = swapchain.extent,
             };
 
-            for (cmdbufs, framebuffers, desc_sets) |cmdbuf, framebuffer, desc_set| {
+            for (cmdbufs, framebuffers) |cmdbuf, framebuffer| {
                 try device.beginCommandBuffer(cmdbuf, &.{});
 
                 device.cmdSetViewport(cmdbuf, 0, 1, @ptrCast(&viewport));
@@ -925,11 +899,11 @@ const Renderer = struct {
         return .{
             .swapchain = swapchain,
             .uniforms = .{},
-            .uniform_buffers = uniform_buffers,
-            .uniform_memories = uniform_buffer_memories,
+            .uniform_buffer = uniform_buffer,
+            .uniform_memory = uniform_buffer_memory,
             .descriptor_set_layout = desc_set_layout,
             .descriptor_pool = desc_pool,
-            .descriptor_sets = desc_sets,
+            .descriptor_set = desc_set,
             .pass = pass,
             .pipeline_layout = pipeline_layout,
             .pipeline = pipeline,
@@ -947,14 +921,11 @@ const Renderer = struct {
         defer self.swapchain.deinit(device);
 
         defer {
-            for (self.uniform_buffers) |buf| device.destroyBuffer(buf, null);
-            allocator.free(self.uniform_buffers);
-            for (self.uniform_memories) |mem| device.freeMemory(mem, null);
-            allocator.free(self.uniform_memories);
+            device.destroyBuffer(self.uniform_buffer, null);
+            device.freeMemory(self.uniform_memory, null);
         }
         defer device.destroyDescriptorSetLayout(self.descriptor_set_layout, null);
         defer device.destroyDescriptorPool(self.descriptor_pool, null);
-        defer allocator.free(self.descriptor_sets);
 
         defer device.destroyRenderPass(self.pass, null);
         defer device.destroyPipelineLayout(self.pipeline_layout, null);
@@ -977,9 +948,8 @@ const Renderer = struct {
 
     fn present(self: *@This(), ctx: *Engine.VulkanContext) !Swapchain.PresentState {
         const cmdbuf = self.command_buffers[self.swapchain.image_index];
-        const uniform_mem = &self.uniform_memories[self.swapchain.image_index];
 
-        return self.swapchain.present(cmdbuf, ctx, &self.uniforms, uniform_mem) catch |err| switch (err) {
+        return self.swapchain.present(cmdbuf, ctx, &self.uniforms, &self.uniform_memory) catch |err| switch (err) {
             error.OutOfDateKHR => return .suboptimal,
             else => |narrow| return narrow,
         };
@@ -1343,6 +1313,11 @@ pub fn main() !void {
             if (engine.window.is_minimized()) {
                 continue;
             }
+
+            // multiple framebuffers => multiple descriptor sets => different buffers
+            // big buffers that depends on the last frame's big buffer + multiple framebuffers => me sad
+            // so just wait for one frame's queue to be empty before trying to render another frame
+            try engine.graphics.device.queueWaitIdle(engine.graphics.graphics_queue.handle);
 
             const state = try renderer.present(&engine.graphics);
             // IDK: this never triggers :/

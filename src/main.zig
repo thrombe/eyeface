@@ -242,6 +242,10 @@ const Engine = struct {
                     .p_queue_create_infos = &qci,
                     .enabled_extension_count = required_device_extensions.len,
                     .pp_enabled_extension_names = @ptrCast(&required_device_extensions),
+                    .p_enabled_features = &.{
+                        .fill_mode_non_solid = vk.TRUE,
+                        .vertex_pipeline_stores_and_atomics = vk.TRUE,
+                    },
                 }, null);
                 break :blk device;
             };
@@ -405,9 +409,13 @@ const Renderer = struct {
     uniform_buffer: vk.Buffer,
     uniform_memory: vk.DeviceMemory,
     descriptor_pool: vk.DescriptorPool,
-    descriptor_set_layout: vk.DescriptorSetLayout,
-    descriptor_set: vk.DescriptorSet,
+    frag_descriptor_set_layout: vk.DescriptorSetLayout,
+    frag_descriptor_set: vk.DescriptorSet,
+    compute_descriptor_set_layout: vk.DescriptorSetLayout,
+    compute_descriptor_set: vk.DescriptorSet,
     pass: vk.RenderPass,
+    compute_pipeline_layout: vk.PipelineLayout,
+    compute_pipeline: vk.Pipeline,
     pipeline_layout: vk.PipelineLayout,
     pipeline: vk.Pipeline,
     // framebuffers are objects containing views of swapchain images
@@ -440,11 +448,11 @@ const Renderer = struct {
             },
         };
 
-        pos: [2]f32,
-        color: [3]f32,
+        pos: [4]f32,
+        color: [4]f32,
     };
     const Uniforms = extern struct {
-        a: f32 = 0,
+        frame: u32 = 0,
         b: f32 = 0,
     };
 
@@ -471,7 +479,83 @@ const Renderer = struct {
         errdefer device.freeMemory(uniform_buffer_memory, null);
         try device.bindBufferMemory(uniform_buffer, uniform_buffer_memory, 0);
 
-        const desc_set_layout = try device.createDescriptorSetLayout(&.{
+        const pool = try device.createCommandPool(&.{
+            .queue_family_index = ctx.graphics_queue.family,
+            .flags = .{
+                .reset_command_buffer_bit = true,
+            },
+        }, null);
+        errdefer device.destroyCommandPool(pool, null);
+
+        var vertices = std.ArrayList(Vertex).init(allocator);
+        defer vertices.deinit();
+        var rng = std.Random.DefaultPrng.init(0);
+        const p1 = utils.Vec4{ .x = 0, .y = -0.5 };
+        const p2 = utils.Vec4{ .x = 0.5, .y = 0.5 };
+        const p3 = utils.Vec4{ .x = -0.5, .y = 0.5 };
+        for (0..(64 * 500)) |_| {
+            var pos = utils.Vec4{};
+            for (0..10) |_| {
+                const p = switch (rng.next() % 3) {
+                    0 => p1,
+                    1 => p2,
+                    2 => p3,
+                    else => unreachable,
+                };
+                pos.x += p.x;
+                pos.x /= 2.0;
+                pos.y += p.y;
+                pos.y /= 2.0;
+            }
+            // pos = utils.Vec4{};
+            try vertices.append(.{ .pos = .{ pos.x, pos.y, 0, 0 }, .color = .{ 1, 1, 1, 1 } });
+        }
+        // try vertices.append(.{ .pos = .{ 0, -0.5 }, .color = .{ 1, 1, 1 } });
+        // try vertices.append(.{ .pos = .{ 0.5, 0.5 }, .color = .{ 1, 1, 1 } });
+        // try vertices.append(.{ .pos = .{ -0.5, 0.5 }, .color = .{ 1, 1, 1 } });
+        const vertex_buffer = blk: {
+            const buffer = try device.createBuffer(&.{
+                .size = @sizeOf(Vertex) * vertices.items.len,
+                .usage = .{
+                    .transfer_dst_bit = true,
+                    .vertex_buffer_bit = true,
+                    .storage_buffer_bit = true,
+                },
+                .sharing_mode = .exclusive,
+            }, null);
+            errdefer device.destroyBuffer(buffer, null);
+            const mem_reqs = device.getBufferMemoryRequirements(buffer);
+            const memory = try ctx.allocate(mem_reqs, .{ .device_local_bit = true });
+            errdefer device.freeMemory(memory, null);
+            try device.bindBufferMemory(buffer, memory, 0);
+
+            const staging_buffer = try device.createBuffer(&.{
+                .size = @sizeOf(Vertex) * vertices.items.len,
+                .usage = .{ .transfer_src_bit = true },
+                .sharing_mode = .exclusive,
+            }, null);
+            defer device.destroyBuffer(staging_buffer, null);
+            const staging_mem_reqs = device.getBufferMemoryRequirements(staging_buffer);
+            const staging_memory = try ctx.allocate(staging_mem_reqs, .{ .host_visible_bit = true, .host_coherent_bit = true });
+            defer device.freeMemory(staging_memory, null);
+            try device.bindBufferMemory(staging_buffer, staging_memory, 0);
+
+            {
+                const data = try device.mapMemory(staging_memory, 0, vk.WHOLE_SIZE, .{});
+                defer device.unmapMemory(staging_memory);
+
+                const gpu_vertices: [*]Vertex = @ptrCast(@alignCast(data));
+                @memcpy(gpu_vertices, vertices.items);
+            }
+
+            try copyBuffer(ctx, device, pool, buffer, staging_buffer, @sizeOf(Vertex) * vertices.items.len);
+
+            break :blk .{ .buffer = buffer, .memory = memory };
+        };
+        errdefer device.destroyBuffer(vertex_buffer.buffer, null);
+        errdefer device.freeMemory(vertex_buffer.memory, null);
+
+        const frag_desc_set_layout = try device.createDescriptorSetLayout(&.{
             .flags = .{},
             .binding_count = 1,
             .p_bindings = &[_]vk.DescriptorSetLayoutBinding{
@@ -487,24 +571,63 @@ const Renderer = struct {
                 },
             },
         }, null);
-        errdefer device.destroyDescriptorSetLayout(desc_set_layout, null);
+        errdefer device.destroyDescriptorSetLayout(frag_desc_set_layout, null);
+        const compute_desc_set_layout = try device.createDescriptorSetLayout(&.{
+            .flags = .{},
+            .binding_count = 2,
+            .p_bindings = &[_]vk.DescriptorSetLayoutBinding{
+                .{
+                    .binding = 0,
+                    .descriptor_type = .uniform_buffer,
+                    .descriptor_count = 1,
+                    .stage_flags = .{
+                        .vertex_bit = true,
+                        .fragment_bit = true,
+                        .compute_bit = true,
+                    },
+                },
+                .{
+                    .binding = 1,
+                    .descriptor_type = .storage_buffer,
+                    .descriptor_count = 1,
+                    .stage_flags = .{
+                        .vertex_bit = true,
+                        .fragment_bit = true,
+                        .compute_bit = true,
+                    },
+                },
+            },
+        }, null);
+        errdefer device.destroyDescriptorSetLayout(compute_desc_set_layout, null);
         const desc_pool = try device.createDescriptorPool(&.{
-            .max_sets = 1,
-            .pool_size_count = 1,
-            .p_pool_sizes = &[_]vk.DescriptorPoolSize{.{
-                .type = .uniform_buffer,
-                .descriptor_count = @intCast(swapchain.swap_images.len),
-            }},
+            .max_sets = 2,
+            .pool_size_count = 2,
+            .p_pool_sizes = &[_]vk.DescriptorPoolSize{
+                .{
+                    .type = .uniform_buffer,
+                    .descriptor_count = 1,
+                },
+                .{
+                    .type = .storage_buffer,
+                    .descriptor_count = 1,
+                },
+            },
         }, null);
         errdefer device.destroyDescriptorPool(desc_pool, null);
-        var desc_set: vk.DescriptorSet = undefined;
+        var frag_desc_set: vk.DescriptorSet = undefined;
+        var compute_desc_set: vk.DescriptorSet = undefined;
         try device.allocateDescriptorSets(&.{
             .descriptor_pool = desc_pool,
             .descriptor_set_count = 1,
-            .p_set_layouts = @ptrCast(&desc_set_layout),
-        }, @ptrCast(&desc_set));
+            .p_set_layouts = @ptrCast(&frag_desc_set_layout),
+        }, @ptrCast(&frag_desc_set));
+        try device.allocateDescriptorSets(&.{
+            .descriptor_pool = desc_pool,
+            .descriptor_set_count = 1,
+            .p_set_layouts = @ptrCast(&compute_desc_set_layout),
+        }, @ptrCast(&compute_desc_set));
         device.updateDescriptorSets(1, &[_]vk.WriteDescriptorSet{.{
-            .dst_set = desc_set,
+            .dst_set = frag_desc_set,
             .dst_binding = 0,
             .dst_array_element = 0,
             .descriptor_count = 1,
@@ -519,6 +642,38 @@ const Renderer = struct {
             .p_image_info = undefined,
             .p_texel_buffer_view = undefined,
         }}, 0, null);
+        device.updateDescriptorSets(2, &[_]vk.WriteDescriptorSet{
+            .{
+                .dst_set = compute_desc_set,
+                .dst_binding = 0,
+                .dst_array_element = 0,
+                .descriptor_count = 1,
+                .descriptor_type = .uniform_buffer,
+                .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                    .buffer = uniform_buffer,
+                    .offset = 0,
+                    .range = @sizeOf(Uniforms),
+                }},
+                // OOF: ??
+                .p_image_info = undefined,
+                .p_texel_buffer_view = undefined,
+            },
+            .{
+                .dst_set = compute_desc_set,
+                .dst_binding = 1,
+                .dst_array_element = 0,
+                .descriptor_count = 1,
+                .descriptor_type = .storage_buffer,
+                .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                    .buffer = vertex_buffer.buffer,
+                    .offset = 0,
+                    .range = vk.WHOLE_SIZE,
+                }},
+                // OOF: ??
+                .p_image_info = undefined,
+                .p_texel_buffer_view = undefined,
+            },
+        }, 0, null);
 
         var compiler = utils.Glslc.Compiler{ .opt = .fast, .env = .vulkan1_3 };
         const vert_spv = blk: {
@@ -573,6 +728,32 @@ const Renderer = struct {
             }
         };
         defer allocator.free(frag_spv);
+        const compute_spv = blk: {
+            compiler.stage = .compute;
+            const frag: utils.Glslc.Compiler.Code = .{ .path = .{
+                .main = "./src/compute.glsl",
+                .include = &[_][]const u8{},
+                .definitions = &[_][]const u8{},
+            } };
+            // _ = compiler.dump_assembly(allocator, &frag);
+            const res = try compiler.compile(
+                allocator,
+                &frag,
+                .spirv,
+            );
+            switch (res) {
+                .Err => |msg| {
+                    std.debug.print("{s}\n", .{msg.msg});
+                    allocator.free(msg.msg);
+                    return msg.err;
+                },
+                .Ok => |ok| {
+                    errdefer allocator.free(ok);
+                    break :blk ok;
+                },
+            }
+        };
+        defer allocator.free(compute_spv);
 
         const pass = blk: {
             const color_attachment = vk.AttachmentDescription{
@@ -606,10 +787,41 @@ const Renderer = struct {
         };
         errdefer device.destroyRenderPass(pass, null);
 
+        const compute_pipeline_layout = try device.createPipelineLayout(&.{
+            // .flags: PipelineLayoutCreateFlags = .{},
+            .set_layout_count = 1,
+            .p_set_layouts = @ptrCast(&compute_desc_set_layout),
+        }, null);
+        errdefer device.destroyPipelineLayout(compute_pipeline_layout, null);
+        const compute_pipeline = blk: {
+            const compute = try device.createShaderModule(&.{
+                .code_size = compute_spv.len * @sizeOf(u32),
+                .p_code = @ptrCast(compute_spv.ptr),
+            }, null);
+            defer device.destroyShaderModule(compute, null);
+
+            const cpci = vk.ComputePipelineCreateInfo{
+                .stage = .{
+                    .stage = .{
+                        .compute_bit = true,
+                    },
+                    .module = compute,
+                    .p_name = "main",
+                },
+                .layout = compute_pipeline_layout,
+                .base_pipeline_index = undefined,
+            };
+
+            var pipeline: vk.Pipeline = undefined;
+            _ = try device.createComputePipelines(.null_handle, 1, @ptrCast(&cpci), null, @ptrCast(&pipeline));
+            break :blk pipeline;
+        };
+        errdefer device.destroyPipeline(compute_pipeline, null);
+
         const pipeline_layout = try device.createPipelineLayout(&.{
             .flags = .{},
             .set_layout_count = 1,
-            .p_set_layouts = @ptrCast(&desc_set_layout),
+            .p_set_layouts = @ptrCast(&compute_desc_set_layout),
             .push_constant_range_count = 0,
             .p_push_constant_ranges = undefined,
         }, null);
@@ -642,10 +854,10 @@ const Renderer = struct {
             };
 
             const pvisci = vk.PipelineVertexInputStateCreateInfo{
-                .vertex_binding_description_count = 1,
-                .p_vertex_binding_descriptions = @ptrCast(&Vertex.binding_description),
-                .vertex_attribute_description_count = Vertex.attribute_description.len,
-                .p_vertex_attribute_descriptions = &Vertex.attribute_description,
+                // .vertex_binding_description_count = 1,
+                // .p_vertex_binding_descriptions = @ptrCast(&Vertex.binding_description),
+                // .vertex_attribute_description_count = Vertex.attribute_description.len,
+                // .p_vertex_attribute_descriptions = &Vertex.attribute_description,
             };
 
             const piasci = vk.PipelineInputAssemblyStateCreateInfo{
@@ -764,74 +976,6 @@ const Renderer = struct {
             allocator.free(framebuffers);
         }
 
-        const pool = try device.createCommandPool(&.{
-            .queue_family_index = ctx.graphics_queue.family,
-        }, null);
-        errdefer device.destroyCommandPool(pool, null);
-
-        var vertices = std.ArrayList(Vertex).init(allocator);
-        defer vertices.deinit();
-        var rng = std.Random.DefaultPrng.init(0);
-        const p1 = utils.Vec4{ .x = 0, .y = -0.5 };
-        const p2 = utils.Vec4{ .x = 0.5, .y = 0.5 };
-        const p3 = utils.Vec4{ .x = -0.5, .y = 0.5 };
-        for (0..10000) |_| {
-            var pos = utils.Vec4{};
-            for (0..10) |_| {
-                const p = switch (rng.next() % 3) {
-                    0 => p1,
-                    1 => p2,
-                    2 => p3,
-                    else => unreachable,
-                };
-                pos.x += p.x;
-                pos.x /= 2.0;
-                pos.y += p.y;
-                pos.y /= 2.0;
-            }
-            try vertices.append(.{ .pos = .{ pos.x, pos.y }, .color = .{ 1, 1, 1 } });
-        }
-        // try vertices.append(.{ .pos = .{ 0, -0.5 }, .color = .{ 1, 1, 1 } });
-        // try vertices.append(.{ .pos = .{ 0.5, 0.5 }, .color = .{ 1, 1, 1 } });
-        // try vertices.append(.{ .pos = .{ -0.5, 0.5 }, .color = .{ 1, 1, 1 } });
-        const vertex_buffer = blk: {
-            const buffer = try device.createBuffer(&.{
-                .size = @sizeOf(Vertex) * vertices.items.len,
-                .usage = .{ .transfer_dst_bit = true, .vertex_buffer_bit = true },
-                .sharing_mode = .exclusive,
-            }, null);
-            errdefer device.destroyBuffer(buffer, null);
-            const mem_reqs = device.getBufferMemoryRequirements(buffer);
-            const memory = try ctx.allocate(mem_reqs, .{ .device_local_bit = true });
-            errdefer device.freeMemory(memory, null);
-            try device.bindBufferMemory(buffer, memory, 0);
-
-            const staging_buffer = try device.createBuffer(&.{
-                .size = @sizeOf(Vertex) * vertices.items.len,
-                .usage = .{ .transfer_src_bit = true },
-                .sharing_mode = .exclusive,
-            }, null);
-            defer device.destroyBuffer(staging_buffer, null);
-            const staging_mem_reqs = device.getBufferMemoryRequirements(staging_buffer);
-            const staging_memory = try ctx.allocate(staging_mem_reqs, .{ .host_visible_bit = true, .host_coherent_bit = true });
-            defer device.freeMemory(staging_memory, null);
-            try device.bindBufferMemory(staging_buffer, staging_memory, 0);
-
-            {
-                const data = try device.mapMemory(staging_memory, 0, vk.WHOLE_SIZE, .{});
-                defer device.unmapMemory(staging_memory);
-
-                const gpu_vertices: [*]Vertex = @ptrCast(@alignCast(data));
-                @memcpy(gpu_vertices, vertices.items);
-            }
-
-            try copyBuffer(ctx, device, pool, buffer, staging_buffer, @sizeOf(Vertex) * vertices.items.len);
-
-            break :blk .{ .buffer = buffer, .memory = memory };
-        };
-        errdefer device.destroyBuffer(vertex_buffer.buffer, null);
-        errdefer device.freeMemory(vertex_buffer.memory, null);
-
         const command_buffers = blk: {
             const cmdbufs = try allocator.alloc(vk.CommandBuffer, framebuffers.len);
             errdefer allocator.free(cmdbufs);
@@ -865,6 +1009,38 @@ const Renderer = struct {
             for (cmdbufs, framebuffers) |cmdbuf, framebuffer| {
                 try device.beginCommandBuffer(cmdbuf, &.{});
 
+                device.cmdBindPipeline(cmdbuf, .compute, compute_pipeline);
+                device.cmdBindDescriptorSets(cmdbuf, .compute, compute_pipeline_layout, 0, 1, @ptrCast(&compute_desc_set), 0, null);
+                device.cmdDispatch(cmdbuf, @intCast(vertices.items.len / 64), 1, 1);
+
+                // device.cmdPipelineBarrier(cmdbuf, .{
+                //     .compute_shader_bit = true,
+                // }, .{
+                //     .vertex_input_bit = true,
+                //     .vertex_shader_bit = true,
+                // }, .{}, 1, &[_]vk.MemoryBarrier{.{
+                //     .src_access_mask = .{
+                //         .shader_write_bit = true,
+                //     },
+                //     .dst_access_mask = .{
+                //         .shader_read_bit = true,
+                //         .vertex_attribute_read_bit = true,
+                //     },
+                // }}, 1, (&[_]vk.BufferMemoryBarrier{.{
+                //     .src_queue_family_index = ctx.graphics_queue.family,
+                //     .dst_queue_family_index = ctx.graphics_queue.family,
+                //     .buffer = vertex_buffer.buffer,
+                //     .offset = 0,
+                //     .size = vk.WHOLE_SIZE,
+                //     .src_access_mask = .{
+                //         .shader_write_bit = true,
+                //     },
+                //     .dst_access_mask = .{
+                //         .vertex_attribute_read_bit = true,
+                //         .shader_read_bit = true,
+                //     },
+                // }}), 0, null);
+
                 device.cmdSetViewport(cmdbuf, 0, 1, @ptrCast(&viewport));
                 device.cmdSetScissor(cmdbuf, 0, 1, @ptrCast(&scissor));
 
@@ -880,9 +1056,8 @@ const Renderer = struct {
                 }, .@"inline");
 
                 device.cmdBindPipeline(cmdbuf, .graphics, pipeline);
-                const offset = [_]vk.DeviceSize{0};
-                device.cmdBindVertexBuffers(cmdbuf, 0, 1, @ptrCast(&vertex_buffer.buffer), &offset);
-                device.cmdBindDescriptorSets(cmdbuf, .graphics, pipeline_layout, 0, 1, @ptrCast(&desc_set), 0, null);
+                // device.cmdBindVertexBuffers(cmdbuf, 0, 1, @ptrCast(&vertex_buffer.buffer), &[_]vk.DeviceSize{0});
+                device.cmdBindDescriptorSets(cmdbuf, .graphics, pipeline_layout, 0, 1, @ptrCast(&compute_desc_set), 0, null);
                 device.cmdDraw(cmdbuf, @intCast(vertices.items.len), 1, 0, 0);
 
                 device.cmdEndRenderPass(cmdbuf);
@@ -901,10 +1076,14 @@ const Renderer = struct {
             .uniforms = .{},
             .uniform_buffer = uniform_buffer,
             .uniform_memory = uniform_buffer_memory,
-            .descriptor_set_layout = desc_set_layout,
             .descriptor_pool = desc_pool,
-            .descriptor_set = desc_set,
+            .frag_descriptor_set_layout = frag_desc_set_layout,
+            .frag_descriptor_set = frag_desc_set,
+            .compute_descriptor_set_layout = compute_desc_set_layout,
+            .compute_descriptor_set = compute_desc_set,
             .pass = pass,
+            .compute_pipeline_layout = compute_pipeline_layout,
+            .compute_pipeline = compute_pipeline,
             .pipeline_layout = pipeline_layout,
             .pipeline = pipeline,
             .framebuffers = framebuffers,
@@ -924,10 +1103,17 @@ const Renderer = struct {
             device.destroyBuffer(self.uniform_buffer, null);
             device.freeMemory(self.uniform_memory, null);
         }
-        defer device.destroyDescriptorSetLayout(self.descriptor_set_layout, null);
+        defer {
+            device.destroyBuffer(self.vertex_buffer, null);
+            device.freeMemory(self.vertex_buffer_memory, null);
+        }
+        defer device.destroyDescriptorSetLayout(self.frag_descriptor_set_layout, null);
+        defer device.destroyDescriptorSetLayout(self.compute_descriptor_set_layout, null);
         defer device.destroyDescriptorPool(self.descriptor_pool, null);
 
         defer device.destroyRenderPass(self.pass, null);
+        defer device.destroyPipelineLayout(self.compute_pipeline_layout, null);
+        defer device.destroyPipeline(self.compute_pipeline, null);
         defer device.destroyPipelineLayout(self.pipeline_layout, null);
         defer device.destroyPipeline(self.pipeline, null);
 
@@ -936,10 +1122,6 @@ const Renderer = struct {
             allocator.free(self.framebuffers);
         }
         defer device.destroyCommandPool(self.command_pool, null);
-        defer {
-            device.destroyBuffer(self.vertex_buffer, null);
-            device.freeMemory(self.vertex_buffer_memory, null);
-        }
         defer {
             device.freeCommandBuffers(self.command_pool, @truncate(self.command_buffers.len), self.command_buffers.ptr);
             allocator.free(self.command_buffers);
@@ -1319,6 +1501,7 @@ pub fn main() !void {
             // so just wait for one frame's queue to be empty before trying to render another frame
             try engine.graphics.device.queueWaitIdle(engine.graphics.graphics_queue.handle);
 
+            renderer.uniforms.frame += 1;
             const state = try renderer.present(&engine.graphics);
             // IDK: this never triggers :/
             if (state == .suboptimal) {

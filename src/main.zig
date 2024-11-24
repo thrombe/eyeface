@@ -244,7 +244,7 @@ const Engine = struct {
                     .pp_enabled_extension_names = @ptrCast(&required_device_extensions),
                     .p_enabled_features = &.{
                         .fill_mode_non_solid = vk.TRUE,
-                        .vertex_pipeline_stores_and_atomics = vk.TRUE,
+                        // .vertex_pipeline_stores_and_atomics = vk.TRUE,
                     },
                 }, null);
                 break :blk device;
@@ -821,7 +821,7 @@ const Renderer = struct {
         const pipeline_layout = try device.createPipelineLayout(&.{
             .flags = .{},
             .set_layout_count = 1,
-            .p_set_layouts = @ptrCast(&compute_desc_set_layout),
+            .p_set_layouts = @ptrCast(&frag_desc_set_layout),
             .push_constant_range_count = 0,
             .p_push_constant_ranges = undefined,
         }, null);
@@ -854,10 +854,10 @@ const Renderer = struct {
             };
 
             const pvisci = vk.PipelineVertexInputStateCreateInfo{
-                // .vertex_binding_description_count = 1,
-                // .p_vertex_binding_descriptions = @ptrCast(&Vertex.binding_description),
-                // .vertex_attribute_description_count = Vertex.attribute_description.len,
-                // .p_vertex_attribute_descriptions = &Vertex.attribute_description,
+                .vertex_binding_description_count = 1,
+                .p_vertex_binding_descriptions = @ptrCast(&Vertex.binding_description),
+                .vertex_attribute_description_count = Vertex.attribute_description.len,
+                .p_vertex_attribute_descriptions = &Vertex.attribute_description,
             };
 
             const piasci = vk.PipelineInputAssemblyStateCreateInfo{
@@ -1056,8 +1056,8 @@ const Renderer = struct {
                 }, .@"inline");
 
                 device.cmdBindPipeline(cmdbuf, .graphics, pipeline);
-                // device.cmdBindVertexBuffers(cmdbuf, 0, 1, @ptrCast(&vertex_buffer.buffer), &[_]vk.DeviceSize{0});
-                device.cmdBindDescriptorSets(cmdbuf, .graphics, pipeline_layout, 0, 1, @ptrCast(&compute_desc_set), 0, null);
+                device.cmdBindVertexBuffers(cmdbuf, 0, 1, @ptrCast(&vertex_buffer.buffer), &[_]vk.DeviceSize{0});
+                device.cmdBindDescriptorSets(cmdbuf, .graphics, pipeline_layout, 0, 1, @ptrCast(&frag_desc_set), 0, null);
                 device.cmdDraw(cmdbuf, @intCast(vertices.items.len), 1, 0, 0);
 
                 device.cmdEndRenderPass(cmdbuf);

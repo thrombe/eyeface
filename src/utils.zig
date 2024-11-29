@@ -2,17 +2,73 @@ const std = @import("std");
 const main = @import("main.zig");
 const allocator = main.allocator;
 
-pub const Vec4 = struct {
+pub const Vec4 = extern struct {
     x: f32 = 0,
     y: f32 = 0,
     z: f32 = 0,
     w: f32 = 0,
 
+    pub fn dot(self: *const @This(), other: @This()) f32 {
+        return self.x * other.x +
+            self.y * other.y +
+            self.z * other.z +
+            self.w * other.w;
+    }
+
+    pub fn cross(self: *const @This(), other: @This()) @This() {
+        return .{
+            .x = self.y * other.z - self.z * other.y,
+            .y = self.z * other.x - self.x * other.z,
+            .z = self.x * other.y - self.y * other.x,
+            .w = 0,
+        };
+    }
+
+    pub fn mul(self: *const @This(), other: @This()) @This() {
+        return .{
+            .x = self.x * other.x,
+            .y = self.y * other.y,
+            .z = self.z * other.z,
+            .w = self.w * other.w,
+        };
+    }
+
+    pub fn add(self: *const @This(), other: @This()) @This() {
+        return .{
+            .x = self.x + other.x,
+            .y = self.y + other.y,
+            .z = self.z + other.z,
+            .w = self.w + other.w,
+        };
+    }
+
+    pub fn sub(self: *const @This(), other: @This()) @This() {
+        return .{
+            .x = self.x - other.x,
+            .y = self.y - other.y,
+            .z = self.z - other.z,
+            .w = self.w - other.w,
+        };
+    }
+
+    pub fn scale(self: *const @This(), s: f32) @This() {
+        return .{ .x = self.x * s, .y = self.y * s, .z = self.z * s, .w = self.w * s };
+    }
+
+    pub fn normalize3D(self: *const @This()) @This() {
+        const size = @sqrt(self.dot(self.*));
+        return .{
+            .x = self.x / size,
+            .y = self.y / size,
+            .z = self.z / size,
+            .w = 0,
+        };
+    }
     pub fn to_buf(self: *const @This()) [4]f32 {
         return .{ self.x, self.y, self.z, self.w };
     }
 
-    pub fn gamma_correct_inv(self: @This()) @This() {
+    pub fn gamma_correct_inv(self: *const @This()) @This() {
         // const p: f32 = 1.0 / 2.2;
         const p: f32 = 2.2;
         return .{

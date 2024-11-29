@@ -110,6 +110,18 @@ const Engine = struct {
             c.glfwPollEvents();
         }
 
+        fn is_pressed(self: *@This(), key: c_int) bool {
+            return c.glfwGetKey(self.handle, key) == c.GLFW_PRESS;
+        }
+
+        fn poll_mouse(self: *@This()) struct { left: bool, x: i32, y: i32 } {
+            var x: f64 = 0;
+            var y: f64 = 0;
+            c.glfwGetCursorPos(self.handle, @ptrCast(&x), @ptrCast(&y));
+            const left = c.glfwGetMouseButton(self.handle, c.GLFW_MOUSE_BUTTON_LEFT);
+            return .{ .left = left == c.GLFW_PRESS, .x = @intFromFloat(x), .y = @intFromFloat(y) };
+        }
+
         fn should_close(self: *@This()) bool {
             return c.glfwWindowShouldClose(self.handle) == c.GLFW_TRUE;
         }
@@ -427,7 +439,7 @@ const Renderer = struct {
     command_buffers: []vk.CommandBuffer,
 
     const Device = Engine.VulkanContext.Api.Device;
-    const Vertex = struct {
+    const Vertex = extern struct {
         const binding_description = vk.VertexInputBindingDescription{
             .binding = 0,
             .stride = @sizeOf(Vertex),
@@ -452,8 +464,90 @@ const Renderer = struct {
         color: [4]f32,
     };
     const Uniforms = extern struct {
+        transforms: [5]utils.Mat4x4 = .{ .{}, .{}, .{}, .{}, .{} },
+        view_matrix: utils.Mat4x4,
+        projection_matrix: utils.Mat4x4,
+        world_to_screen: utils.Mat4x4,
+        eye: utils.Vec4,
+        mouse: extern struct { x: i32 = 0, y: i32 = 0, left: u32 = 0, right: u32 = 0 } = .{},
+        pitch: f32 = 0,
+        yaw: f32 = 0,
         frame: u32 = 0,
-        b: f32 = 0,
+
+        fn init(width: u32, height: u32) @This() {
+            const eye = utils.Vec4{};
+            const up = utils.Vec4{ .y = -1 };
+            const at = utils.Vec4{ .z = 1 };
+            const view = utils.Mat4x4.view(eye, at, up);
+            const projection = utils.Mat4x4.perspective_projection(height, width, 0.01, 100.0, std.math.pi / 3.0);
+            return .{
+                .eye = eye,
+                .view_matrix = view,
+                .projection_matrix = projection,
+                .world_to_screen = projection.mul_mat(view),
+            };
+        }
+
+        fn tick(self: *@This(), timer: *std.time.Timer, window: *Engine.Window) void {
+            const pitch_min = -std.math.pi / 2.0 + 0.1;
+            const pitch_max = std.math.pi / 2.0 - 0.1;
+            var up = utils.Vec4{ .y = -1 };
+            var fwd = utils.Vec4{ .z = 1 };
+            var right = utils.Vec4{ .x = 1 };
+            const speed = 2.0;
+            const sensitivity = 2.0;
+
+            const lap = timer.lap();
+            const delta = @as(f32, @floatFromInt(lap)) / @as(f32, @floatFromInt(std.time.ns_per_s));
+            std.debug.print("fps: {d}\n", .{@as(u32, @intFromFloat(1.0 / delta))});
+            const w = window.is_pressed(c.GLFW_KEY_W);
+            const a = window.is_pressed(c.GLFW_KEY_A);
+            const s = window.is_pressed(c.GLFW_KEY_S);
+            const d = window.is_pressed(c.GLFW_KEY_D);
+            const mouse = window.poll_mouse();
+
+            if (mouse.left) {
+                self.yaw += @as(f32, @floatFromInt(mouse.x - self.mouse.x)) * sensitivity * delta;
+                self.pitch -= @as(f32, @floatFromInt(mouse.y - self.mouse.y)) * sensitivity * delta;
+                self.pitch = std.math.clamp(self.pitch, pitch_min, pitch_max);
+            }
+
+            self.mouse.left = @intCast(@intFromBool(mouse.left));
+            self.mouse.x = mouse.x;
+            self.mouse.y = mouse.y;
+
+            var rot = utils.Vec4.quat_identity_rot();
+            rot = rot.quat_global_rot(utils.Vec4.quat_angle_axis(self.yaw, up));
+            rot = rot.quat_local_rot(utils.Vec4.quat_angle_axis(self.pitch, right));
+            rot = rot.quat_conjugate();
+
+            up = rot.rotate_vector(up);
+            fwd = rot.rotate_vector(fwd);
+            right = rot.rotate_vector(right);
+
+            if (w) {
+                self.eye = self.eye.add(fwd.scale(delta * speed));
+            }
+            if (a) {
+                self.eye = self.eye.sub(right.scale(delta * speed));
+            }
+            if (s) {
+                self.eye = self.eye.sub(fwd.scale(delta * speed));
+            }
+            if (d) {
+                self.eye = self.eye.add(right.scale(delta * speed));
+            }
+
+            const projection = utils.Mat4x4.perspective_projection(window.extent.height, window.extent.width, 0.01, 100.0, std.math.pi / 3.0);
+            self.projection_matrix = projection;
+            self.view_matrix = utils.Mat4x4.view(self.eye, fwd, up);
+            self.world_to_screen = self.projection_matrix.mul_mat(self.view_matrix);
+            self.frame += 1;
+
+            self.projection_matrix = self.projection_matrix.transpose();
+            self.view_matrix = self.view_matrix.transpose();
+            self.world_to_screen = self.world_to_screen.transpose();
+        }
     };
 
     fn init(engine: *Engine) !@This() {
@@ -510,9 +604,9 @@ const Renderer = struct {
             // pos = utils.Vec4{};
             try vertices.append(.{ .pos = .{ pos.x, pos.y, 0, 0 }, .color = .{ 1, 1, 1, 1 } });
         }
-        // try vertices.append(.{ .pos = .{ 0, -0.5 }, .color = .{ 1, 1, 1 } });
-        // try vertices.append(.{ .pos = .{ 0.5, 0.5 }, .color = .{ 1, 1, 1 } });
-        // try vertices.append(.{ .pos = .{ -0.5, 0.5 }, .color = .{ 1, 1, 1 } });
+        // try vertices.append(.{ .pos = .{ 0, -0.5, 0, 0 }, .color = .{ 1, 0, 0, 1 } });
+        // try vertices.append(.{ .pos = .{ 0.5, 0.5, 0, 0 }, .color = .{ 0, 1, 0, 1 } });
+        // try vertices.append(.{ .pos = .{ -0.5, 0.5, 0, 0 }, .color = .{ 0, 0, 1, 1 } });
         const vertex_buffer = blk: {
             const buffer = try device.createBuffer(&.{
                 .size = @sizeOf(Vertex) * vertices.items.len,
@@ -1073,7 +1167,7 @@ const Renderer = struct {
 
         return .{
             .swapchain = swapchain,
-            .uniforms = .{},
+            .uniforms = Uniforms.init(engine.window.extent.width, engine.window.extent.height),
             .uniform_buffer = uniform_buffer,
             .uniform_memory = uniform_buffer_memory,
             .descriptor_pool = desc_pool,
@@ -1489,6 +1583,7 @@ pub fn main() !void {
         var renderer = try Renderer.init(&engine);
         defer renderer.deinit(&engine.graphics.device);
 
+        var timer = try std.time.Timer.start();
         while (!engine.window.should_close()) {
             defer engine.window.tick();
 
@@ -1496,12 +1591,13 @@ pub fn main() !void {
                 continue;
             }
 
+            renderer.uniforms.tick(&timer, engine.window);
+
             // multiple framebuffers => multiple descriptor sets => different buffers
             // big buffers that depends on the last frame's big buffer + multiple framebuffers => me sad
             // so just wait for one frame's queue to be empty before trying to render another frame
             try engine.graphics.device.queueWaitIdle(engine.graphics.graphics_queue.handle);
 
-            renderer.uniforms.frame += 1;
             const state = try renderer.present(&engine.graphics);
             // IDK: this never triggers :/
             if (state == .suboptimal) {

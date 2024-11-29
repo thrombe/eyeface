@@ -143,6 +143,121 @@ pub const Vec4 = extern struct {
     }
 };
 
+// - [Matrix storage](https://github.com/hexops/machengine.org/blob/0aab00137dc3d1098e5237e2bee124e0ef9fbc17/content/docs/math/matrix-storage.md)
+// here, i store matrix as
+// | V1 |
+// | V2 |
+// | V3 |
+// | V4 |
+// BUT, vulkan wants | V1, V2, V3, V4 | (columns contiguous).
+// so we need to transpose just before sending these to the gpu (TODO: get rid of this)
+//
+// all computation below is performed assuming right associative multiplication
+// and uses column vectors (even though it is stored as row vectors in the struct)
+// i.e. self.data[{0, 1, 2, 3}].x is 1 vector
+//
+pub const Mat4x4 = extern struct {
+    data: [4]Vec4 = std.mem.zeroes([4]Vec4),
+
+    pub fn mul_vec4(self: *const @This(), v: Vec4) Vec4 {
+        return .{
+            .x = self.data[0].dot(v),
+            .y = self.data[1].dot(v),
+            .z = self.data[2].dot(v),
+            .w = self.data[3].dot(v),
+        };
+    }
+
+    pub fn mul_mat(self: *const @This(), other: @This()) @This() {
+        const o = other.transpose();
+        return .{ .data = .{
+            .{
+                .x = self.data[0].dot(o.data[0]),
+                .y = self.data[0].dot(o.data[1]),
+                .z = self.data[0].dot(o.data[2]),
+                .w = self.data[0].dot(o.data[3]),
+            },
+            .{
+                .x = self.data[1].dot(o.data[0]),
+                .y = self.data[1].dot(o.data[1]),
+                .z = self.data[1].dot(o.data[2]),
+                .w = self.data[1].dot(o.data[3]),
+            },
+            .{
+                .x = self.data[2].dot(o.data[0]),
+                .y = self.data[2].dot(o.data[1]),
+                .z = self.data[2].dot(o.data[2]),
+                .w = self.data[2].dot(o.data[3]),
+            },
+            .{
+                .x = self.data[3].dot(o.data[0]),
+                .y = self.data[3].dot(o.data[1]),
+                .z = self.data[3].dot(o.data[2]),
+                .w = self.data[3].dot(o.data[3]),
+            },
+        } };
+    }
+
+    pub fn identity() @This() {
+        return [4].{ .data = .{
+            .{ .x = 1, .y = 0, .z = 0, .w = 0 },
+            .{ .x = 0, .y = 1, .z = 0, .w = 0 },
+            .{ .x = 0, .y = 0, .z = 1, .w = 0 },
+            .{ .x = 0, .y = 0, .z = 0, .w = 1 },
+        } };
+    }
+
+    pub fn transpose(self: *const @This()) @This() {
+        return .{ .data = .{
+            .{ .x = self.data[0].x, .y = self.data[1].x, .z = self.data[2].x, .w = self.data[3].x },
+            .{ .x = self.data[0].y, .y = self.data[1].y, .z = self.data[2].y, .w = self.data[3].y },
+            .{ .x = self.data[0].z, .y = self.data[1].z, .z = self.data[2].z, .w = self.data[3].z },
+            .{ .x = self.data[0].w, .y = self.data[1].w, .z = self.data[2].w, .w = self.data[3].w },
+        } };
+    }
+
+    pub fn perspective_projection(height: u32, width: u32, near: f32, far: f32, fov: f32) @This() {
+        // - [Perspective Projection](https://www.youtube.com/watch?v=U0_ONQQ5ZNM)
+        var self = @This(){};
+
+        const a = @as(f32, @floatFromInt(height)) / @as(f32, @floatFromInt(width));
+        const f = 1.0 / @tan(fov / 2);
+        const l = far / (far - near);
+
+        self.data[0].x = a * f;
+        self.data[1].y = f;
+        self.data[2].z = l;
+        self.data[2].w = -l * near;
+        self.data[3].z = 1;
+        // self.data[2].w = 1;
+        // self.data[3].z = -l * near;
+
+        return self;
+    }
+
+    pub fn view(eye: Vec4, at: Vec4, _up: Vec4) @This() {
+        // - [» Deriving the View Matrix](https://twodee.org/blog/17560)
+
+        const front = at.normalize3D();
+        const up = _up.normalize3D();
+        const right = front.cross(up);
+
+        const translate_inv = Mat4x4{ .data = .{
+            .{ .x = 1, .y = 0, .z = 0, .w = -eye.x },
+            .{ .x = 0, .y = 1, .z = 0, .w = -eye.y },
+            .{ .x = 0, .y = 0, .z = 1, .w = -eye.z },
+            .{ .x = 0, .y = 0, .z = 0, .w = 1 },
+        } };
+
+        return (Mat4x4{ .data = .{
+            right,
+            up,
+            front,
+            .{ .w = 1 },
+        } }).mul_mat(translate_inv);
+    }
+};
+
 pub const ColorParse = struct {
     pub fn hex_rgba(typ: type, comptime hex: []const u8) typ {
         if (hex.len != 9 or hex[0] != '#') {

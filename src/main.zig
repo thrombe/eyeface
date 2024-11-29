@@ -543,10 +543,6 @@ const Renderer = struct {
             self.view_matrix = utils.Mat4x4.view(self.eye, fwd, up);
             self.world_to_screen = self.projection_matrix.mul_mat(self.view_matrix);
             self.frame += 1;
-
-            self.projection_matrix = self.projection_matrix.transpose();
-            self.view_matrix = self.view_matrix.transpose();
-            self.world_to_screen = self.world_to_screen.transpose();
         }
     };
 

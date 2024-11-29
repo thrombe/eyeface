@@ -449,19 +449,12 @@ const Renderer = struct {
             .{
                 .binding = 0,
                 .location = 0,
-                .format = .r32g32_sfloat,
-                .offset = @offsetOf(Vertex, "pos"),
-            },
-            .{
-                .binding = 0,
-                .location = 1,
                 .format = .r32g32b32_sfloat,
-                .offset = @offsetOf(Vertex, "color"),
+                .offset = @offsetOf(Vertex, "pos"),
             },
         };
 
         pos: [4]f32,
-        color: [4]f32,
     };
     const Uniforms = extern struct {
         transforms: [5]utils.Mat4x4 = .{ .{}, .{}, .{}, .{}, .{} },
@@ -475,7 +468,7 @@ const Renderer = struct {
         frame: u32 = 0,
 
         fn init(width: u32, height: u32) @This() {
-            const eye = utils.Vec4{};
+            const eye = utils.Vec4{ .z = -1 };
             const up = utils.Vec4{ .y = -1 };
             const at = utils.Vec4{ .z = 1 };
             const view = utils.Mat4x4.view(eye, at, up);
@@ -579,30 +572,8 @@ const Renderer = struct {
 
         var vertices = std.ArrayList(Vertex).init(allocator);
         defer vertices.deinit();
-        var rng = std.Random.DefaultPrng.init(0);
-        const p1 = utils.Vec4{ .x = 0, .y = -0.5 };
-        const p2 = utils.Vec4{ .x = 0.5, .y = 0.5 };
-        const p3 = utils.Vec4{ .x = -0.5, .y = 0.5 };
-        for (0..(64 * 500)) |_| {
-            var pos = utils.Vec4{};
-            for (0..10) |_| {
-                const p = switch (rng.next() % 3) {
-                    0 => p1,
-                    1 => p2,
-                    2 => p3,
-                    else => unreachable,
-                };
-                pos.x += p.x;
-                pos.x /= 2.0;
-                pos.y += p.y;
-                pos.y /= 2.0;
-            }
-            // pos = utils.Vec4{};
-            try vertices.append(.{ .pos = .{ pos.x, pos.y, 0, 0 }, .color = .{ 1, 1, 1, 1 } });
-        }
-        // try vertices.append(.{ .pos = .{ 0, -0.5, 0, 0 }, .color = .{ 1, 0, 0, 1 } });
-        // try vertices.append(.{ .pos = .{ 0.5, 0.5, 0, 0 }, .color = .{ 0, 1, 0, 1 } });
-        // try vertices.append(.{ .pos = .{ -0.5, 0.5, 0, 0 }, .color = .{ 0, 0, 1, 1 } });
+        try vertices.appendNTimes(.{ .pos = std.mem.zeroes([4]f32) }, 64 * 150000);
+
         const vertex_buffer = blk: {
             const buffer = try device.createBuffer(&.{
                 .size = @sizeOf(Vertex) * vertices.items.len,

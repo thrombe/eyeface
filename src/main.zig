@@ -473,11 +473,22 @@ const Renderer = struct {
             const at = utils.Vec4{ .z = 1 };
             const view = utils.Mat4x4.view(eye, at, up);
             const projection = utils.Mat4x4.perspective_projection(height, width, 0.01, 100.0, std.math.pi / 3.0);
+
+            var transforms: [5]utils.Mat4x4 = std.mem.zeroes([5]utils.Mat4x4);
+            transforms = .{
+                .{ .data = .{ .{ .x = 0.5 }, .{ .y = 0.5 }, .{ .z = 0.5 }, .{ .x = 0.0, .y = 0.5, .z = 0, .w = 1 } } },
+                .{ .data = .{ .{ .x = 0.5 }, .{ .y = 0.5 }, .{ .z = 0.5 }, .{ .x = 0.5, .y = -0.5, .z = 0.5, .w = 1 } } },
+                .{ .data = .{ .{ .x = 0.5 }, .{ .y = 0.5 }, .{ .z = 0.5 }, .{ .x = 0.5, .y = -0.5, .z = -0.5, .w = 1 } } },
+                .{ .data = .{ .{ .x = 0.5 }, .{ .y = 0.5 }, .{ .z = 0.5 }, .{ .x = -0.5, .y = -0.5, .z = 0.5, .w = 1 } } },
+                .{ .data = .{ .{ .x = 0.5 }, .{ .y = 0.5 }, .{ .z = 0.5 }, .{ .x = -0.5, .y = -0.5, .z = -0.5, .w = 1 } } },
+            };
+
             return .{
                 .eye = eye,
                 .view_matrix = view,
                 .projection_matrix = projection,
                 .world_to_screen = projection.mul_mat(view),
+                .transforms = transforms,
             };
         }
 
@@ -487,8 +498,8 @@ const Renderer = struct {
             var up = utils.Vec4{ .y = -1 };
             var fwd = utils.Vec4{ .z = 1 };
             var right = utils.Vec4{ .x = 1 };
-            const speed = 2.0;
-            const sensitivity = 2.0;
+            const speed = 1.0;
+            const sensitivity = 1.0;
 
             const lap = timer.lap();
             const delta = @as(f32, @floatFromInt(lap)) / @as(f32, @floatFromInt(std.time.ns_per_s));
@@ -572,7 +583,7 @@ const Renderer = struct {
 
         var vertices = std.ArrayList(Vertex).init(allocator);
         defer vertices.deinit();
-        try vertices.appendNTimes(.{ .pos = std.mem.zeroes([4]f32) }, 64 * 150000);
+        try vertices.appendNTimes(.{ .pos = .{ 0, 0, 0, 1 } }, 64 * 150000);
 
         const vertex_buffer = blk: {
             const buffer = try device.createBuffer(&.{

@@ -29,10 +29,6 @@ layout(set = 0, binding = 1) buffer VertexInput {
 
 layout (local_size_x = 8, local_size_y = 8) in;
 
-const vec4 p1 = vec4(0.0, -0.5, 0.0, 0.0);
-const vec4 p2 = vec4(0.5, 0.5, 0.0, 0.0);
-const vec4 p3 = vec4(-0.5, 0.5, 0.0, 0.0);
-
 uint rand_xorshift(uint state) {
     state ^= (state << 13);
     state ^= (state >> 17);
@@ -45,19 +41,8 @@ void main() {
     // uint id = gl_GlobalInvocationID.x;
     vec4 pos = vertices[id].pos;
 
-    uint seed = rand_xorshift(id + ubo.frame * 100000);
-    uint choice = seed % 3;
-
-    vec4 selectedPoint;
-    if (choice == 0) {
-        selectedPoint = p1;
-    } else if (choice == 1) {
-        selectedPoint = p2;
-    } else {
-        selectedPoint = p3;
-    }
-
-    pos = mix(pos, selectedPoint, 0.5);
+    uint seed = rand_xorshift(id + ubo.frame * 10000000);
+    pos = ubo.transforms[seed % 5] * pos;
 
     vertices[id].pos = pos;
 }

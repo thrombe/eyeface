@@ -521,8 +521,8 @@ const Renderer = struct {
             self.mouse.y = mouse.y;
 
             var rot = utils.Vec4.quat_identity_rot();
-            rot = rot.quat_global_rot(utils.Vec4.quat_angle_axis(self.yaw, up));
-            rot = rot.quat_local_rot(utils.Vec4.quat_angle_axis(self.pitch, right));
+            rot = rot.quat_mul(utils.Vec4.quat_angle_axis(self.pitch, right));
+            rot = rot.quat_mul(utils.Vec4.quat_angle_axis(self.yaw, up));
             rot = rot.quat_conjugate();
 
             up = rot.rotate_vector(up);

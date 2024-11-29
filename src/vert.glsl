@@ -28,7 +28,22 @@ layout(location = 0) in vec3 i_pos;
 
 layout(location = 0) out vec3 o_color;
 
+const vec4 p1 = vec4(0.0, -0.5, 0.0, 1.0);
+const vec4 p2 = vec4(0.5, 0.5, 0.0, 1.0);
+const vec4 p3 = vec4(-0.5, 0.5, 0.0, 1.0);
+
 void main() {
-    gl_Position = ubo.world_to_screen * vec4(i_pos, 1.0);
+    vec4 selectedPoint;
+    if (gl_InstanceIndex == 0) {
+        selectedPoint = p1;
+    } else if (gl_InstanceIndex == 1) {
+        selectedPoint = p2;
+    } else {
+        selectedPoint = p3;
+    }
+
+    vec4 pos = mix(vec4(i_pos, 1.0), selectedPoint, 0.5);
+
+    gl_Position = ubo.world_to_screen * pos;
     o_color = vec3(1.0);
 }

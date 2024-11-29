@@ -1037,6 +1037,8 @@ const Renderer = struct {
             allocator.free(framebuffers);
         }
 
+        const uniforms = Uniforms.init(engine.window.extent.width, engine.window.extent.height);
+
         const command_buffers = blk: {
             const cmdbufs = try allocator.alloc(vk.CommandBuffer, framebuffers.len);
             errdefer allocator.free(cmdbufs);
@@ -1119,7 +1121,7 @@ const Renderer = struct {
                 device.cmdBindPipeline(cmdbuf, .graphics, pipeline);
                 device.cmdBindVertexBuffers(cmdbuf, 0, 1, @ptrCast(&vertex_buffer.buffer), &[_]vk.DeviceSize{0});
                 device.cmdBindDescriptorSets(cmdbuf, .graphics, pipeline_layout, 0, 1, @ptrCast(&frag_desc_set), 0, null);
-                device.cmdDraw(cmdbuf, @intCast(vertices.items.len), 1, 0, 0);
+                device.cmdDraw(cmdbuf, @intCast(vertices.items.len), uniforms.transforms.len, 0, 0);
 
                 device.cmdEndRenderPass(cmdbuf);
                 try device.endCommandBuffer(cmdbuf);
@@ -1134,7 +1136,7 @@ const Renderer = struct {
 
         return .{
             .swapchain = swapchain,
-            .uniforms = Uniforms.init(engine.window.extent.width, engine.window.extent.height),
+            .uniforms = uniforms,
             .uniform_buffer = uniform_buffer,
             .uniform_memory = uniform_buffer_memory,
             .descriptor_pool = desc_pool,

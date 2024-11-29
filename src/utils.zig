@@ -64,6 +64,69 @@ pub const Vec4 = extern struct {
             .w = 0,
         };
     }
+
+    pub fn quat_identity_rot() @This() {
+        return .{ .w = 1 };
+    }
+
+    pub fn quat_euler_angles(pitch: f32, yaw: f32) @This() {
+        // No roll is used, only pitch and yaw
+        const half_pitch = pitch * 0.5;
+        const half_yaw = yaw * 0.5;
+
+        const cos_pitch = @cos(half_pitch);
+        const sin_pitch = @sin(half_pitch);
+        const cos_yaw = @cos(half_yaw);
+        const sin_yaw = @sin(half_yaw);
+
+        return .{
+            .w = cos_pitch * cos_yaw,
+            .x = sin_pitch * cos_yaw,
+            .y = cos_pitch * sin_yaw,
+            .z = -sin_pitch * sin_yaw, // Negative for correct rotation direction
+        };
+    }
+
+    pub fn quat_angle_axis(angle: f32, axis: Vec4) @This() {
+        // - [Visualizing quaternions, an explorable video series](https://eater.net/quaternions)
+        const s = @sin(angle / 2.0);
+        var q = axis.normalize3D().scale(s);
+        q.w = @cos(angle / 2.0);
+        return q;
+    }
+
+    // mult from the right means applying that rotation first.
+    pub fn quat_mul(self: *const @This(), other: @This()) @This() {
+        return .{
+            .w = self.w * other.w - self.x * other.x - self.y * other.y - self.z * other.z,
+            .x = self.w * other.x + self.x * other.w + self.y * other.z - self.z * other.y,
+            .y = self.w * other.y + self.y * other.w + self.z * other.x - self.x * other.z,
+            .z = self.w * other.z + self.z * other.w + self.x * other.y - self.y * other.x,
+        };
+    }
+
+    // - [How to Use Quaternions - YouTube](https://www.youtube.com/watch?v=bKd2lPjl92c)
+    // use this for rotation relative to world axes
+    pub fn quat_global_rot(self: *const @This(), other: @This()) @This() {
+        return other.quat_mul(self.*);
+    }
+
+    // use this for rotations relative to player's fwd, right, up as the axes
+    pub fn quat_local_rot(self: *const @This(), other: @This()) @This() {
+        return self.quat_mul(other);
+    }
+
+    pub fn quat_conjugate(self: *const @This()) @This() {
+        return .{ .w = self.w, .x = -self.x, .y = -self.y, .z = -self.z };
+    }
+
+    pub fn rotate_vector(self: *const @This(), v: Vec4) Vec4 {
+        const qv = .{ .w = 0, .x = v.x, .y = v.y, .z = v.z };
+        const q_conjugate = self.quat_conjugate();
+        const q_result = self.quat_mul(qv).quat_mul(q_conjugate);
+        return Vec4{ .x = q_result.x, .y = q_result.y, .z = q_result.z };
+    }
+
     pub fn to_buf(self: *const @This()) [4]f32 {
         return .{ self.x, self.y, self.z, self.w };
     }

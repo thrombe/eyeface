@@ -18,6 +18,13 @@ pub fn build(b: *std.Build) void {
     //     .optimize = optimize,
     // });
 
+    const cimgui_dep = b.dependency("cimgui", .{
+        .target = target,
+        .optimize = optimize,
+        .platform = .GLFW,
+        .renderer = .Vulkan,
+    });
+
     const exe = b.addExecutable(.{
         .name = "eyeface",
         .root_source_file = b.path("src/main.zig"),
@@ -25,6 +32,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     exe.root_module.addImport("vulkan", vulkan_zig);
+    exe.linkLibrary(cimgui_dep.artifact("cimgui"));
+    exe.addIncludePath(cimgui_dep.path("dcimgui/backends"));
     exe.linkSystemLibrary("fswatch");
     exe.linkSystemLibrary2("ImageMagick", .{});
     exe.linkSystemLibrary2("MagickWand", .{});
@@ -32,7 +41,7 @@ pub fn build(b: *std.Build) void {
 
     // exe.root_module.linkLibrary(glfw.artifact("glfw"));
     // @import("glfw").addPaths(&exe.root_module);
-    exe.linkSystemLibrary("glfw");
+    // exe.linkSystemLibrary("glfw");
     exe.linkLibC();
     b.installArtifact(exe);
 

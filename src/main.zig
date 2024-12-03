@@ -5,6 +5,10 @@ const c = @cImport({
     // @cDefine("GLFW_INCLUDE_NONE", "1");
     @cInclude("GLFW/glfw3.h");
     @cInclude("GLFW/glfw3native.h");
+
+    @cInclude("dcimgui.h");
+    @cInclude("cimgui_impl_glfw.h");
+    @cInclude("cimgui_impl_vulkan.h");
 });
 
 const vk = @import("vulkan");
@@ -550,7 +554,7 @@ const Renderer = struct {
         }
     };
 
-    fn init(engine: *Engine) !@This() {
+    fn init(engine: *Engine, gui: *Gui) !@This() {
         var ctx = &engine.graphics;
         const device = &ctx.device;
 
@@ -583,7 +587,7 @@ const Renderer = struct {
 
         var vertices = std.ArrayList(Vertex).init(allocator);
         defer vertices.deinit();
-        try vertices.appendNTimes(.{ .pos = .{ 0, 0, 0, 1 } }, 64 * 150000);
+        try vertices.appendNTimes(.{ .pos = .{ 0, 0, 0, 1 } }, 64 * 80000);
 
         const vertex_buffer = blk: {
             const buffer = try device.createBuffer(&.{
@@ -827,7 +831,7 @@ const Renderer = struct {
         };
         defer allocator.free(compute_spv);
 
-        const pass = blk: {
+        var pass = blk: {
             const color_attachment = vk.AttachmentDescription{
                 .format = swapchain.surface_format.format,
                 .samples = .{ .@"1_bit" = true },
@@ -1050,6 +1054,19 @@ const Renderer = struct {
 
         const uniforms = Uniforms.init(engine.window.extent.width, engine.window.extent.height);
 
+        gui.imgui_init(engine, &pass, &swapchain);
+
+        c.cImGui_ImplVulkan_NewFrame();
+        c.cImGui_ImplGlfw_NewFrame();
+        c.ImGui_NewFrame();
+
+        var show_demo_window: bool = true;
+        c.ImGui_ShowDemoWindow(&show_demo_window);
+
+        c.ImGui_Render();
+
+        const draw_data = c.ImGui_GetDrawData();
+
         const command_buffers = blk: {
             const cmdbufs = try allocator.alloc(vk.CommandBuffer, framebuffers.len);
             errdefer allocator.free(cmdbufs);
@@ -1134,6 +1151,8 @@ const Renderer = struct {
                 device.cmdBindDescriptorSets(cmdbuf, .graphics, pipeline_layout, 0, 1, @ptrCast(&frag_desc_set), 0, null);
                 device.cmdDraw(cmdbuf, @intCast(vertices.items.len), uniforms.transforms.len, 0, 0);
 
+                c.cImGui_ImplVulkan_RenderDrawData(draw_data, @as(*c.VkCommandBuffer, @ptrCast(@constCast(&cmdbuf))).*);
+
                 device.cmdEndRenderPass(cmdbuf);
                 try device.endCommandBuffer(cmdbuf);
             }
@@ -1168,7 +1187,7 @@ const Renderer = struct {
         };
     }
 
-    fn deinit(self: *@This(), device: *Device) void {
+    fn deinit(self: *@This(), gui: *Gui, device: *Device) void {
         try self.swapchain.waitForAllFences(device);
 
         defer self.swapchain.deinit(device);
@@ -1200,6 +1219,8 @@ const Renderer = struct {
             device.freeCommandBuffers(self.command_pool, @truncate(self.command_buffers.len), self.command_buffers.ptr);
             allocator.free(self.command_buffers);
         }
+
+        defer gui.imgui_shutdown();
     }
 
     fn present(self: *@This(), ctx: *Engine.VulkanContext) !Swapchain.PresentState {
@@ -1553,6 +1574,89 @@ const Renderer = struct {
     };
 };
 
+const Gui = struct {
+    ctx: *c.ImGuiContext,
+    pool: vk.DescriptorPool,
+
+    const Device = Engine.VulkanContext.Api.Device;
+
+    fn loader(name: [*c]const u8, instance: ?*anyopaque) callconv(.C) ?*const fn () callconv(.C) void {
+        return c.glfwGetInstanceProcAddress(@ptrCast(instance), name);
+    }
+
+    fn init(engine: *Engine) !@This() {
+        const ctx = c.ImGui_CreateContext(null) orelse return error.ErrorCreatingImguiContext;
+        const io = c.ImGui_GetIO(); // (void)io;
+        io.*.ConfigFlags |= c.ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
+        io.*.ConfigFlags |= c.ImGuiConfigFlags_NavEnableGamepad; // Enable Gamepad Controls
+
+        _ = c.cImGui_ImplGlfw_InitForVulkan(engine.window.handle, true);
+        _ = c.cImGui_ImplVulkan_LoadFunctions(loader);
+        const pool = try engine.graphics.device.createDescriptorPool(&.{
+            .flags = .{
+                .free_descriptor_set_bit = true,
+            },
+            .max_sets = 1,
+            .pool_size_count = 1,
+            .p_pool_sizes = &[_]vk.DescriptorPoolSize{.{
+                .type = .combined_image_sampler,
+                .descriptor_count = 1,
+            }},
+        }, null);
+
+        return .{
+            .ctx = ctx,
+            .pool = pool,
+        };
+    }
+
+    fn imgui_init(self: *@This(), engine: *Engine, pass: *vk.RenderPass, swapchain: *Renderer.Swapchain) void {
+        var info = c.ImGui_ImplVulkan_InitInfo{
+            .Instance = @as(*c.VkInstance, @ptrCast(&engine.graphics.instance.handle)).*,
+            .PhysicalDevice = @as(*c.VkPhysicalDevice, @ptrCast(&engine.graphics.pdev)).*,
+            .Device = @as(*c.VkDevice, @ptrCast(&engine.graphics.device.handle)).*,
+            .QueueFamily = engine.graphics.graphics_queue.family,
+            .Queue = @as(*c.VkQueue, @ptrCast(&engine.graphics.graphics_queue.handle)).*,
+            .DescriptorPool = @as(*c.VkDescriptorPool, @ptrCast(&self.pool)).*,
+            .RenderPass = @as(*c.VkRenderPass, @ptrCast(pass)).*,
+            .MinImageCount = 2,
+            .ImageCount = @intCast(swapchain.swap_images.len),
+            // .MSAASamples: VkSampleCountFlagBits = @import("std").mem.zeroes(VkSampleCountFlagBits),
+            // .PipelineCache: VkPipelineCache = @import("std").mem.zeroes(VkPipelineCache),
+            // .Subpass: u32 = @import("std").mem.zeroes(u32),
+            // .UseDynamicRendering: bool = @import("std").mem.zeroes(bool),
+            // .PipelineRenderingCreateInfo: VkPipelineRenderingCreateInfoKHR = @import("std").mem.zeroes(VkPipelineRenderingCreateInfoKHR),
+            // .Allocator: [*c]const VkAllocationCallbacks = @import("std").mem.zeroes([*c]const VkAllocationCallbacks),
+            // .CheckVkResultFn: ?*const fn (VkResult) callconv(.C) void = @import("std").mem.zeroes(?*const fn (VkResult) callconv(.C) void),
+            // .MinAllocationSize: VkDeviceSize = @import("std").mem.zeroes(VkDeviceSize),
+        };
+        _ = c.cImGui_ImplVulkan_Init(&info);
+    }
+
+    fn imgui_shutdown(_: *@This()) void {
+        c.cImGui_ImplVulkan_Shutdown();
+    }
+
+    fn render_start(_: *@This()) void {
+        c.cImGui_ImplVulkan_NewFrame();
+        c.cImGui_ImplGlfw_NewFrame();
+        c.ImGui_NewFrame();
+    }
+
+    fn render_end(_: *@This()) void {
+        c.ImGui_Render();
+        // const draw_data = c.ImGui_GetDrawData();
+        // const is_minimized = (draw_data.*.DisplaySize.x <= 0.0 or draw_data.*.DisplaySize.y <= 0.0);
+    }
+
+    fn deinit(self: *@This(), device: *Device) void {
+        device.destroyDescriptorPool(self.pool, null);
+        // c.cImGui_ImplVulkan_Shutdown();
+        c.cImGui_ImplGlfw_Shutdown();
+        c.ImGui_DestroyContext(self.ctx);
+    }
+};
+
 pub fn main() !void {
     {
         var engine = try Engine.init();
@@ -1560,10 +1664,14 @@ pub fn main() !void {
 
         std.debug.print("using device: {s}\n", .{engine.graphics.props.device_name});
 
-        var renderer = try Renderer.init(&engine);
-        defer renderer.deinit(&engine.graphics.device);
+        var gui = try Gui.init(&engine);
+        defer gui.deinit(&engine.graphics.device);
+
+        var renderer = try Renderer.init(&engine, &gui);
+        defer renderer.deinit(&gui, &engine.graphics.device);
 
         var timer = try std.time.Timer.start();
+        // var show_demo_window: bool = true;
         while (!engine.window.should_close()) {
             defer engine.window.tick();
 
@@ -1585,8 +1693,8 @@ pub fn main() !void {
             }
 
             if (engine.window.resize_fuse.unfuse() or state == .suboptimal) {
-                renderer.deinit(&engine.graphics.device);
-                renderer = try Renderer.init(&engine);
+                renderer.deinit(&gui, &engine.graphics.device);
+                renderer = try Renderer.init(&engine, &gui);
             }
         }
 

@@ -13,11 +13,6 @@ pub fn build(b: *std.Build) void {
         .root_source_file = vk_generate_cmd.addOutputFileArg("vk.zig"),
     });
 
-    // const glfw = b.dependency("glfw", .{
-    //     .target = target,
-    //     .optimize = optimize,
-    // });
-
     const cimgui_dep = b.dependency("cimgui", .{
         .target = target,
         .optimize = optimize,
@@ -39,9 +34,6 @@ pub fn build(b: *std.Build) void {
     exe.linkSystemLibrary2("MagickWand", .{});
     exe.linkSystemLibrary2("MagickCore", .{});
 
-    // exe.root_module.linkLibrary(glfw.artifact("glfw"));
-    // @import("glfw").addPaths(&exe.root_module);
-    // exe.linkSystemLibrary("glfw");
     exe.linkLibC();
     b.installArtifact(exe);
 

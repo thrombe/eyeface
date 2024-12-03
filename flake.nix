@@ -112,7 +112,6 @@
           glslang
           shaderc
 
-          glfw
           vulkan-headers
           vulkan-validation-layers
           libxkbcommon

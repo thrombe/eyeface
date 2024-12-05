@@ -1124,7 +1124,7 @@ const Renderer = struct {
         }
     }
 
-    fn present(self: *@This(), gui: *Gui.GuiRenderer, ctx: *Engine.VulkanContext) !Swapchain.PresentState {
+    fn present(self: *@This(), gui: *GuiEngine.GuiRenderer, ctx: *Engine.VulkanContext) !Swapchain.PresentState {
         const cmdbuf = self.command_buffers[self.swapchain.image_index];
         const gui_cmdbuf = gui.cmd_bufs[self.swapchain.image_index];
 
@@ -1522,8 +1522,7 @@ const State = struct {
         };
     }
 
-    fn tick(self: *@This(), timer: *std.time.Timer, window: *Engine.Window) void {
-        const lap = timer.lap();
+    fn tick(self: *@This(), lap: u64, window: *Engine.Window) void {
         const delta = @as(f32, @floatFromInt(lap)) / @as(f32, @floatFromInt(std.time.ns_per_s));
         // std.debug.print("fps: {d}\n", .{@as(u32, @intFromFloat(1.0 / delta))});
         const w = window.is_pressed(c.GLFW_KEY_W);
@@ -1719,7 +1718,7 @@ const State = struct {
     };
 };
 
-const Gui = struct {
+const GuiEngine = struct {
     ctx: *c.ImGuiContext,
 
     const Device = Engine.VulkanContext.Api.Device;
@@ -1919,6 +1918,19 @@ const Gui = struct {
     };
 };
 
+const GuiState = struct {
+    fn tick(self: *@This(), lap: u64) void {
+        _ = self;
+        const delta = @as(f32, @floatFromInt(lap)) / @as(f32, @floatFromInt(std.time.ns_per_s));
+
+        c.ImGui_SetNextWindowPos(.{ .x = 5, .y = 5 }, c.ImGuiCond_Once);
+        defer c.ImGui_End();
+        if (c.ImGui_Begin("SIKE", null, c.ImGuiWindowFlags_None)) {
+            c.ImGui_Text("Application average %.3f ms/frame (%.1f FPS)", delta, 1.0 / delta);
+        }
+    }
+};
+
 pub fn main() !void {
     {
         var engine = try Engine.init();
@@ -1926,15 +1938,16 @@ pub fn main() !void {
 
         std.debug.print("using device: {s}\n", .{engine.graphics.props.device_name});
 
-        var gui = try Gui.init(engine.window);
+        var gui = try GuiEngine.init(engine.window);
         defer gui.deinit();
 
         var state = State.init(engine.window);
+        var gui_state = GuiState{};
 
         var renderer = try Renderer.init(&engine, &state);
         defer renderer.deinit(&engine.graphics.device);
 
-        var gui_renderer = try Gui.GuiRenderer.init(&engine, &renderer.swapchain);
+        var gui_renderer = try GuiEngine.GuiRenderer.init(&engine, &renderer.swapchain);
         defer gui_renderer.deinit(&engine.graphics.device);
 
         var timer = try std.time.Timer.start();
@@ -1945,14 +1958,12 @@ pub fn main() !void {
                 continue;
             }
 
-            gui_renderer.render_start();
-
-            var show_demo_window: bool = true;
-            c.ImGui_ShowDemoWindow(&show_demo_window);
-
-            state.tick(&timer, engine.window);
+            const lap = timer.lap();
+            state.tick(lap, engine.window);
             renderer.uniforms = state.uniforms(engine.window);
 
+            gui_renderer.render_start();
+            gui_state.tick(lap);
             try gui_renderer.render_end(&engine.graphics.device, &renderer);
 
             // multiple framebuffers => multiple descriptor sets => different buffers
@@ -1971,7 +1982,7 @@ pub fn main() !void {
                 renderer = try Renderer.init(&engine, &state);
 
                 gui_renderer.deinit(&engine.graphics.device);
-                gui_renderer = try Gui.GuiRenderer.init(&engine, &renderer.swapchain);
+                gui_renderer = try GuiEngine.GuiRenderer.init(&engine, &renderer.swapchain);
             }
         }
 

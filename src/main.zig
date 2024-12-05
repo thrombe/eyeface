@@ -1492,8 +1492,7 @@ const State = struct {
     end_transforms: Uniforms.TransformSet.Builder,
     t: f32 = 0,
 
-    _rng: std.Random.Xoshiro256,
-    rng: std.Random,
+    rng: std.Random.Xoshiro256,
 
     const Uniforms = Renderer.Uniforms;
 
@@ -1509,15 +1508,13 @@ const State = struct {
         const pos = utils.Vec4{ .z = -5 };
         const mouse = window.poll_mouse();
 
-        var _rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
-        const rng = _rng.random();
+        var rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
 
         return .{
             .pos = pos,
             .mouse = .{ .x = mouse.x, .y = mouse.y, .left = mouse.left },
             .start_transforms = transformers.sirpinski_pyramid(),
-            .end_transforms = Uniforms.TransformSet.Builder.random(rng),
-            ._rng = _rng,
+            .end_transforms = Uniforms.TransformSet.Builder.random(rng.random()),
             .rng = rng,
         };
     }

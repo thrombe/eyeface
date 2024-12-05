@@ -492,10 +492,18 @@ const Renderer = struct {
             const rng = utils.Rng.init(_rng.random());
 
             for (0..transforms.len) |i| {
-                const scale = utils.Mat4x4.random.scale(&rng.with(.{ .min = 0.4, .max = 0.9, .flip_sign = false }));
+                const scale = utils.Mat4x4.random.scale(&rng.with(.{ .min = 0.4, .max = 0.7, .flip_sign = false }));
                 const translate = utils.Mat4x4.random.translate(&rng);
                 const rot = utils.Mat4x4.random.rot(&rng);
-                transforms[i] = translate.mul_mat(scale).mul_mat(rot);
+                const shear = utils.Mat4x4.random.shear(&rng.with(.{ .min = 0.0, .max = 0.3 }));
+
+                var mat = utils.Mat4x4.identity();
+                mat = mat.mul_mat(translate);
+                mat = mat.mul_mat(shear);
+                mat = mat.mul_mat(scale);
+                mat = mat.mul_mat(rot);
+
+                transforms[i] = mat;
             }
 
             return .{

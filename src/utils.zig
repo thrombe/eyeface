@@ -354,6 +354,19 @@ pub const Mat4x4 = extern struct {
         } };
     }
 
+    pub fn shear_mat(
+        x: struct { y: f32 = 0, z: f32 = 0 },
+        y: struct { x: f32 = 0, z: f32 = 0 },
+        z: struct { x: f32 = 0, y: f32 = 0 },
+    ) @This() {
+        return (@This(){ .data = .{
+            .{ .x = 1, .y = x.y, .z = x.z },
+            .{ .x = y.x, .y = 1, .z = y.z },
+            .{ .x = z.x, .y = z.y, .z = 1 },
+            .{ .w = 1 },
+        } }).transpose();
+    }
+
     pub const random = struct {
         // there's no point in having constrained random numbers for this
         pub fn rot(rng: *const Rng) Mat4x4 {
@@ -389,6 +402,15 @@ pub const Mat4x4 = extern struct {
                     .{ .w = 1 },
                 },
             };
+        }
+
+        pub fn shear(rng: *const Rng) Mat4x4 {
+            return .{ .data = .{
+                .{ .x = 1, .y = rng.next(), .z = rng.next() },
+                .{ .x = rng.next(), .y = 1, .z = rng.next() },
+                .{ .x = rng.next(), .y = rng.next(), .z = 1 },
+                .{ .w = 1 },
+            } };
         }
     };
 };

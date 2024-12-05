@@ -1738,6 +1738,28 @@ const Gui = struct {
         io.*.ConfigFlags |= c.ImGuiConfigFlags_NavEnableKeyboard;
         io.*.ConfigFlags |= c.ImGuiConfigFlags_NavEnableGamepad;
 
+        const color = utils.ColorParse.hex_xyzw;
+        const style = c.ImGui_GetStyle();
+        style.*.Colors[c.ImGuiCol_Text] = c.ImVec4{ .x = 0.93, .y = 0.93, .z = 0.93, .w = 1.00 };
+        style.*.Colors[c.ImGuiCol_TextDisabled] = c.ImVec4{ .x = 0.5, .y = 0.5, .z = 0.5, .w = 1.00 };
+        style.*.Colors[c.ImGuiCol_WindowBg] = c.ImVec4{ .x = 0.11, .y = 0.11, .z = 0.11, .w = 1.00 };
+        style.*.Colors[c.ImGuiCol_ChildBg] = c.ImVec4{ .x = 0.15, .y = 0.15, .z = 0.15, .w = 1.00 };
+        style.*.Colors[c.ImGuiCol_Border] = c.ImVec4{ .x = 0.30, .y = 0.30, .z = 0.30, .w = 1.00 };
+        style.*.Colors[c.ImGuiCol_FrameBg] = c.ImVec4{ .x = 0.20, .y = 0.20, .z = 0.20, .w = 1.00 };
+        style.*.Colors[c.ImGuiCol_FrameBgHovered] = c.ImVec4{ .x = 0.40, .y = 0.40, .z = 0.40, .w = 1.00 };
+        style.*.Colors[c.ImGuiCol_FrameBgActive] = c.ImVec4{ .x = 0.50, .y = 0.50, .z = 0.50, .w = 1.00 };
+        style.*.Colors[c.ImGuiCol_TitleBg] = c.ImVec4{ .x = 0.00, .y = 0.00, .z = 0.00, .w = 1.00 };
+        style.*.Colors[c.ImGuiCol_TitleBgActive] = c.ImVec4{ .x = 0.20, .y = 0.20, .z = 0.20, .w = 1.00 };
+        style.*.Colors[c.ImGuiCol_TitleBgCollapsed] = c.ImVec4{ .x = 0.10, .y = 0.10, .z = 0.10, .w = 1.00 };
+        style.*.Colors[c.ImGuiCol_Button] = c.ImVec4{ .x = 0.80, .y = 0.20, .z = 0.20, .w = 1.00 };
+        style.*.Colors[c.ImGuiCol_ButtonHovered] = c.ImVec4{ .x = 1.00, .y = 0.50, .z = 0.50, .w = 1.00 };
+        style.*.Colors[c.ImGuiCol_ButtonActive] = c.ImVec4{ .x = 1.00, .y = 0.30, .z = 0.30, .w = 1.00 };
+        style.*.Colors[c.ImGuiCol_Header] = color(c.ImVec4, "#3c3836ff");
+        style.*.Colors[c.ImGuiCol_HeaderHovered] = color(c.ImVec4, "#504945ff");
+        style.*.Colors[c.ImGuiCol_HeaderActive] = color(c.ImVec4, "#7c6f64ff");
+        style.*.WindowRounding = 5;
+        style.*.FrameRounding = 3;
+
         _ = c.cImGui_ImplGlfw_InitForVulkan(window.handle, true);
         errdefer c.cImGui_ImplGlfw_Shutdown();
 

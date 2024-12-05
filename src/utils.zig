@@ -385,6 +385,7 @@ pub const Mat4x4 = extern struct {
         } };
     }
 
+    // - [3D Shearing Transformation](https://www.geeksforgeeks.org/computer-graphics-3d-shearing-transformation/)
     pub fn shear_mat(
         x: struct { y: f32 = 0, z: f32 = 0 },
         y: struct { x: f32 = 0, z: f32 = 0 },

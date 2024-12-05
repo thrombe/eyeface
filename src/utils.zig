@@ -2,6 +2,38 @@ const std = @import("std");
 const main = @import("main.zig");
 const allocator = main.allocator;
 
+pub const Rng = struct {
+    rng: std.Random,
+    constraints: Constraints = .{},
+
+    const Constraints = struct {
+        min: f32 = -1,
+        max: f32 = 1,
+        flip_sign: bool = false,
+    };
+
+    pub fn init(rng: std.Random) @This() {
+        return .{ .rng = rng };
+    }
+
+    pub fn next(self: *const @This()) f32 {
+        var rn = self.rng.float(f32);
+        rn = self.constraints.min + rn * (self.constraints.max - self.constraints.min);
+
+        if (self.constraints.flip_sign) {
+            if (self.rng.boolean()) {
+                rn *= -1;
+            }
+        }
+
+        return rn;
+    }
+
+    pub fn with(self: *const @This(), c: Constraints) @This() {
+        return .{ .rng = self.rng, .constraints = c };
+    }
+};
+
 pub const Vec4 = extern struct {
     x: f32 = 0,
     y: f32 = 0,
@@ -55,13 +87,34 @@ pub const Vec4 = extern struct {
         return .{ .x = self.x * s, .y = self.y * s, .z = self.z * s, .w = self.w * s };
     }
 
+    pub fn splat3(t: f32) @This() {
+        return .{ .x = t, .y = t, .z = t };
+    }
+
+    pub fn splat4(t: f32) @This() {
+        return .{ .x = t, .y = t, .z = t, .w = t };
+    }
+
     pub fn normalize3D(self: *const @This()) @This() {
+        var this = self.*;
+        this.w = 0;
+
+        const size = @sqrt(this.dot(this));
+        return .{
+            .x = self.x / size,
+            .y = self.y / size,
+            .z = self.z / size,
+            .w = self.w,
+        };
+    }
+
+    pub fn normalize4D(self: *const @This()) @This() {
         const size = @sqrt(self.dot(self.*));
         return .{
             .x = self.x / size,
             .y = self.y / size,
             .z = self.z / size,
-            .w = 0,
+            .w = self.w / size,
         };
     }
 
@@ -141,6 +194,25 @@ pub const Vec4 = extern struct {
             .w = std.math.pow(f32, self.w, p),
         };
     }
+
+    pub const random = struct {
+        pub fn vec3(rng: *const Rng) Vec4 {
+            return .{
+                .x = rng.next(),
+                .y = rng.next(),
+                .z = rng.next(),
+            };
+        }
+
+        pub fn vec4(rng: *const Rng) Vec4 {
+            return .{
+                .x = rng.next(),
+                .y = rng.next(),
+                .z = rng.next(),
+                .w = rng.next(),
+            };
+        }
+    };
 };
 
 // - [Matrix storage](https://github.com/hexops/machengine.org/blob/0aab00137dc3d1098e5237e2bee124e0ef9fbc17/content/docs/math/matrix-storage.md)
@@ -195,7 +267,7 @@ pub const Mat4x4 = extern struct {
     }
 
     pub fn identity() @This() {
-        return [4].{ .data = .{
+        return .{ .data = .{
             .{ .x = 1, .y = 0, .z = 0, .w = 0 },
             .{ .x = 0, .y = 1, .z = 0, .w = 0 },
             .{ .x = 0, .y = 0, .z = 1, .w = 0 },
@@ -250,6 +322,75 @@ pub const Mat4x4 = extern struct {
             .{ .w = 1 },
         } }).transpose().mul_mat(translate_inv.transpose());
     }
+
+    pub fn scaling_mat(vec3: Vec4) @This() {
+        return .{ .data = .{
+            .{ .x = vec3.x },
+            .{ .y = vec3.y },
+            .{ .z = vec3.z },
+            .{ .w = 1 },
+        } };
+    }
+
+    pub fn translation_mat(vec3: Vec4) @This() {
+        return .{ .data = .{
+            .{ .x = 1 },
+            .{ .y = 1 },
+            .{ .z = 1 },
+            .{ .x = vec3.x, .y = vec3.y, .z = vec3.z, .w = 1 },
+        } };
+    }
+
+    pub fn rot_mat_from_quat(rot: Vec4) @This() {
+        const x = Vec4{ .x = 1 };
+        const y = Vec4{ .y = 1 };
+        const z = Vec4{ .z = 1 };
+
+        return .{ .data = .{
+            rot.rotate_vector(x),
+            rot.rotate_vector(y),
+            rot.rotate_vector(z),
+            .{ .w = 1 },
+        } };
+    }
+
+    pub const random = struct {
+        // there's no point in having constrained random numbers for this
+        pub fn rot(rng: *const Rng) Mat4x4 {
+            var q = Vec4{
+                .x = (rng.rng.float(f32) - 0.5),
+                .y = (rng.rng.float(f32) - 0.5),
+                .z = (rng.rng.float(f32) - 0.5),
+                .w = (rng.rng.float(f32) - 0.5),
+            };
+            q = q.normalize4D();
+
+            const r = Mat4x4.rot_mat_from_quat(q);
+            return r;
+        }
+
+        pub fn translate(rng: *const Rng) Mat4x4 {
+            return .{ .data = .{
+                .{ .x = 1 }, .{ .y = 1 }, .{ .z = 1 }, .{
+                    .x = rng.next(),
+                    .y = rng.next(),
+                    .z = rng.next(),
+                    .w = 1,
+                },
+            } };
+        }
+
+        pub fn scale(rng: *const Rng) Mat4x4 {
+            return .{
+                .data = .{
+                    .{ .x = rng.next() },
+                    .{ .y = rng.next() },
+                    .{ .z = rng.next() },
+                    .{ .w = 1 },
+                },
+            };
+        }
+    };
 };
 
 pub const ColorParse = struct {

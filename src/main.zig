@@ -479,95 +479,23 @@ const Renderer = struct {
             const projection = utils.Mat4x4.perspective_projection(height, width, 0.01, 100.0, std.math.pi / 3.0);
 
             var transforms: [5]utils.Mat4x4 = std.mem.zeroes([5]utils.Mat4x4);
+            const s = utils.Mat4x4.scaling_mat(utils.Vec4.splat3(0.5));
             transforms = .{
-                .{ .data = .{ .{ .x = 0.5 }, .{ .y = 0.5 }, .{ .z = 0.5 }, .{ .x = 0.0, .y = 0.5, .z = 0.0, .w = 1 } } },
-                .{ .data = .{ .{ .x = 0.5 }, .{ .y = 0.5 }, .{ .z = 0.5 }, .{ .x = 0.5, .y = -0.5, .z = 0.5, .w = 1 } } },
-                .{ .data = .{ .{ .x = 0.5 }, .{ .y = 0.5 }, .{ .z = 0.5 }, .{ .x = 0.5, .y = -0.5, .z = -0.5, .w = 1 } } },
-                .{ .data = .{ .{ .x = 0.5 }, .{ .y = 0.5 }, .{ .z = 0.5 }, .{ .x = -0.5, .y = -0.5, .z = 0.5, .w = 1 } } },
-                .{ .data = .{ .{ .x = 0.5 }, .{ .y = 0.5 }, .{ .z = 0.5 }, .{ .x = -0.5, .y = -0.5, .z = -0.5, .w = 1 } } },
+                utils.Mat4x4.translation_mat(.{ .x = 0.0, .y = 0.5, .z = 0.0 }).mul_mat(s),
+                utils.Mat4x4.translation_mat(.{ .x = 0.5, .y = -0.5, .z = 0.5 }).mul_mat(s),
+                utils.Mat4x4.translation_mat(.{ .x = 0.5, .y = -0.5, .z = -0.5 }).mul_mat(s),
+                utils.Mat4x4.translation_mat(.{ .x = -0.5, .y = -0.5, .z = 0.5 }).mul_mat(s),
+                utils.Mat4x4.translation_mat(.{ .x = -0.5, .y = -0.5, .z = -0.5 }).mul_mat(s),
             };
 
-            var _rng = std.Random.DefaultPrng.init(0);
-            const rng = _rng.random();
+            var _rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
+            const rng = utils.Rng.init(_rng.random());
 
             for (0..transforms.len) |i| {
-                // transforms[i] = utils.Mat4x4.identity();
-                transforms[i].data[3] = .{
-                    .x = (rng.float(f32) - 0.5) * 1.0,
-                    .y = (rng.float(f32) - 0.5) * 1.0,
-                    .z = (rng.float(f32) - 0.5) * 1.0,
-                    .w = 1,
-                };
-
-                // Generate a random rotation matrix
-                var thetaX = rng.float(f32) * 2.0 * std.math.pi * 100.0; // Random angle for X-axis
-                var thetaY = rng.float(f32) * 2.0 * std.math.pi * 100.0; // Random angle for Y-axis
-                var thetaZ = rng.float(f32) * 2.0 * std.math.pi * 100.0; // Random angle for Z-axis
-
-                // Calculate rotation matrices around each axis
-                var cosX = std.math.cos(thetaX);
-                var sinX = std.math.sin(thetaX);
-                var cosY = std.math.cos(thetaY);
-                var sinY = std.math.sin(thetaY);
-                var cosZ = std.math.cos(thetaZ);
-                var sinZ = std.math.sin(thetaZ);
-
-                // Rotation around X-axis
-                const rotX = utils.Mat4x4{
-                    .data = .{
-                        .{ .x = 1, .y = 0, .z = 0, .w = 0 },
-                        .{ .x = 0, .y = cosX, .z = -sinX, .w = 0 },
-                        .{ .x = 0, .y = sinX, .z = cosX, .w = 0 },
-                        .{ .x = 0, .y = 0, .z = 0, .w = 1 },
-                    },
-                };
-
-                thetaX = rng.float(f32) * 2.0 * std.math.pi * 100.0; // Random angle for X-axis
-                thetaY = rng.float(f32) * 2.0 * std.math.pi * 100.0; // Random angle for Y-axis
-                thetaZ = rng.float(f32) * 2.0 * std.math.pi * 100.0; // Random angle for Z-axis
-
-                // Calculate rotation matrices around each axis
-                cosX = std.math.cos(thetaX);
-                sinX = std.math.sin(thetaX);
-                cosY = std.math.cos(thetaY);
-                sinY = std.math.sin(thetaY);
-                cosZ = std.math.cos(thetaZ);
-                sinZ = std.math.sin(thetaZ);
-
-                // Rotation around Y-axis
-                const rotY = utils.Mat4x4{
-                    .data = .{
-                        .{ .x = cosY, .y = 0, .z = sinY, .w = 0 },
-                        .{ .x = 0, .y = 1, .z = 0, .w = 0 },
-                        .{ .x = -sinY, .y = 0, .z = cosY, .w = 0 },
-                        .{ .x = 0, .y = 0, .z = 0, .w = 1 },
-                    },
-                };
-
-                thetaX = rng.float(f32) * 2.0 * std.math.pi * 100.0; // Random angle for X-axis
-                thetaY = rng.float(f32) * 2.0 * std.math.pi * 100.0; // Random angle for Y-axis
-                thetaZ = rng.float(f32) * 2.0 * std.math.pi * 100.0; // Random angle for Z-axis
-
-                // Calculate rotation matrices around each axis
-                cosX = std.math.cos(thetaX);
-                sinX = std.math.sin(thetaX);
-                cosY = std.math.cos(thetaY);
-                sinY = std.math.sin(thetaY);
-                cosZ = std.math.cos(thetaZ);
-                sinZ = std.math.sin(thetaZ);
-
-                // Rotation around Z-axis
-                const rotZ = utils.Mat4x4{
-                    .data = .{
-                        .{ .x = cosZ, .y = -sinZ, .z = 0, .w = 0 },
-                        .{ .x = sinZ, .y = cosZ, .z = 0, .w = 0 },
-                        .{ .x = 0, .y = 0, .z = 1, .w = 0 },
-                        .{ .x = 0, .y = 0, .z = 0, .w = 1 },
-                    },
-                };
-
-                // Combine the rotations (Z * Y * X)
-                transforms[i] = transforms[i].mul_mat(rotZ).mul_mat(rotY).mul_mat(rotX);
+                const scale = utils.Mat4x4.random.scale(&rng.with(.{ .min = 0.4, .max = 0.9, .flip_sign = false }));
+                const translate = utils.Mat4x4.random.translate(&rng);
+                const rot = utils.Mat4x4.random.rot(&rng);
+                transforms[i] = translate.mul_mat(scale).mul_mat(rot);
             }
 
             return .{

@@ -469,6 +469,46 @@ const Renderer = struct {
                 const Builder = struct {
                     transforms: [n]Transforms,
 
+                    fn init() @This() {
+                        var this = std.mem.zeroes(@This());
+
+                        inline for (0..n) |i| {
+                            this.transforms[i] = Transforms.init();
+                        }
+
+                        return this;
+                    }
+
+                    fn random(rng: std.Random) @This() {
+                        var this = std.mem.zeroes(@This());
+
+                        inline for (0..n) |i| {
+                            this.transforms[i] = Transforms.random(rng);
+                        }
+
+                        return this;
+                    }
+
+                    fn mix(self: *const @This(), other: *const @This(), t: f32) @This() {
+                        var this = std.mem.zeroes(@This());
+
+                        inline for (0..n) |i| {
+                            this.transforms[i] = self.transforms[i].mix(&other.transforms[i], t);
+                        }
+
+                        return this;
+                    }
+
+                    fn build(self: *const @This()) TransformSet(n) {
+                        var this = std.mem.zeroes(TransformSet(n));
+
+                        inline for (0..n) |i| {
+                            this.transforms[i] = self.transforms[i].combine();
+                        }
+
+                        return this;
+                    }
+
                     const Transforms = struct {
                         translate: utils.Mat4x4,
                         shear: utils.Mat4x4,
@@ -518,49 +558,6 @@ const Renderer = struct {
                             };
                         }
                     };
-
-                    fn init() @This() {
-                        var this = std.mem.zeroes(@This());
-
-                        inline for (0..n) |i| {
-                            this.transforms[i] = Transforms.init();
-                        }
-
-                        return this;
-                    }
-
-                    fn random() @This() {
-                        var _rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
-                        const rng = _rng.random();
-
-                        var this = std.mem.zeroes(@This());
-
-                        inline for (0..n) |i| {
-                            this.transforms[i] = Transforms.random(rng);
-                        }
-
-                        return this;
-                    }
-
-                    fn mix(self: *const @This(), other: *const @This(), t: f32) @This() {
-                        var this = std.mem.zeroes(@This());
-
-                        inline for (0..n) |i| {
-                            this.transforms[i] = self.transforms[i].mix(&other.transforms[i], t);
-                        }
-
-                        return this;
-                    }
-
-                    fn build(self: *const @This()) TransformSet(n) {
-                        var this = std.mem.zeroes(TransformSet(n));
-
-                        inline for (0..n) |i| {
-                            this.transforms[i] = self.transforms[i].combine();
-                        }
-
-                        return this;
-                    }
                 };
             };
         }
@@ -604,7 +601,10 @@ const Renderer = struct {
             const view = utils.Mat4x4.view(eye, at, up);
             const projection = utils.Mat4x4.perspective_projection(height, width, 0.01, 100.0, std.math.pi / 3.0);
 
-            const transforms: TransformSet = transformers.sirpinski_pyramid().mix(&TransformSet.Builder.random(), 0.3).build();
+            var _rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
+            const rng = _rng.random();
+
+            const transforms: TransformSet = transformers.sirpinski_pyramid().mix(&TransformSet.Builder.random(rng), 0.3).build();
 
             return .{
                 .eye = eye,

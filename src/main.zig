@@ -460,8 +460,122 @@ const Renderer = struct {
 
         pos: [4]f32,
     };
+
+    pub const transformers = struct {
+        pub fn TransformSet(n: u32) type {
+            return extern struct {
+                transforms: [n]utils.Mat4x4 = std.mem.zeroes([n]utils.Mat4x4),
+
+                const Builder = struct {
+                    transforms: [n]Transforms,
+
+                    const Transforms = struct {
+                        translate: utils.Mat4x4,
+                        shear: utils.Mat4x4,
+                        scale: utils.Mat4x4,
+                        rot: utils.Mat4x4,
+
+                        fn init() @This() {
+                            return .{
+                                .translate = utils.Mat4x4.identity(),
+                                .shear = utils.Mat4x4.identity(),
+                                .scale = utils.Mat4x4.identity(),
+                                .rot = utils.Mat4x4.identity(),
+                            };
+                        }
+
+                        fn random(_rng: std.Random) @This() {
+                            const rng = utils.Rng.init(_rng);
+
+                            const scale = utils.Mat4x4.random.scale(&rng.with(.{ .min = 0.4, .max = 0.7, .flip_sign = false }));
+                            const translate = utils.Mat4x4.random.translate(&rng);
+                            const rot = utils.Mat4x4.random.rot(&rng);
+                            const shear = utils.Mat4x4.random.shear(&rng.with(.{ .min = 0.0, .max = 0.3 }));
+
+                            return .{
+                                .translate = translate,
+                                .shear = shear,
+                                .scale = scale,
+                                .rot = rot,
+                            };
+                        }
+
+                        fn combine(self: *const @This()) utils.Mat4x4 {
+                            var mat = utils.Mat4x4.identity();
+                            mat = mat.mul_mat(self.translate);
+                            mat = mat.mul_mat(self.shear);
+                            mat = mat.mul_mat(self.scale);
+                            mat = mat.mul_mat(self.rot);
+                            return mat;
+                        }
+
+                        fn mix(self: *const @This(), other: *const @This(), t: f32) @This() {
+                            return .{
+                                .translate = self.translate.mix(&other.translate, t),
+                                .shear = self.shear.mix(&other.shear, t),
+                                .scale = self.scale.mix(&other.scale, t),
+                                .rot = self.rot.mix(&other.rot, t),
+                            };
+                        }
+                    };
+
+                    fn init() @This() {
+                        var this = std.mem.zeroes(@This());
+
+                        inline for (0..n) |i| {
+                            this.transforms[i] = Transforms.init();
+                        }
+
+                        return this;
+                    }
+
+                    fn random() @This() {
+                        var _rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
+                        const rng = _rng.random();
+
+                        var this = std.mem.zeroes(@This());
+
+                        inline for (0..n) |i| {
+                            this.transforms[i] = Transforms.random(rng);
+                        }
+
+                        return this;
+                    }
+
+                    fn build(self: *const @This()) TransformSet(n) {
+                        var this = std.mem.zeroes(TransformSet(n));
+
+                        inline for (0..n) |i| {
+                            this.transforms[i] = self.transforms[i].combine();
+                        }
+
+                        return this;
+                    }
+                };
+            };
+        }
+
+        pub fn sirpinski_pyramid() TransformSet(5).Builder {
+            var this = TransformSet(5).Builder.init();
+
+            const s = utils.Mat4x4.scaling_mat(utils.Vec4.splat3(0.5));
+
+            inline for (0..5) |i| {
+                this.transforms[i].scale = s;
+            }
+
+            this.transforms[0].translate = utils.Mat4x4.translation_mat(.{ .x = 0.0, .y = 1.0, .z = 0.0 });
+            this.transforms[1].translate = utils.Mat4x4.translation_mat(.{ .x = 1.0, .y = -1.0, .z = 1.0 });
+            this.transforms[2].translate = utils.Mat4x4.translation_mat(.{ .x = 1.0, .y = -1.0, .z = -1.0 });
+            this.transforms[3].translate = utils.Mat4x4.translation_mat(.{ .x = -1.0, .y = -1.0, .z = 1.0 });
+            this.transforms[4].translate = utils.Mat4x4.translation_mat(.{ .x = -1.0, .y = -1.0, .z = -1.0 });
+
+            return this;
+        }
+    };
+
     const Uniforms = extern struct {
-        transforms: [5]utils.Mat4x4 = .{ .{}, .{}, .{}, .{}, .{} },
+        transforms: TransformSet,
         view_matrix: utils.Mat4x4,
         projection_matrix: utils.Mat4x4,
         world_to_screen: utils.Mat4x4,
@@ -471,40 +585,16 @@ const Renderer = struct {
         yaw: f32 = 0,
         frame: u32 = 0,
 
+        const TransformSet = transformers.TransformSet(5);
+
         fn init(width: u32, height: u32) @This() {
-            const eye = utils.Vec4{ .z = -1 };
+            const eye = utils.Vec4{ .z = -5 };
             const up = utils.Vec4{ .y = -1 };
             const at = utils.Vec4{ .z = 1 };
             const view = utils.Mat4x4.view(eye, at, up);
             const projection = utils.Mat4x4.perspective_projection(height, width, 0.01, 100.0, std.math.pi / 3.0);
 
-            var transforms: [5]utils.Mat4x4 = std.mem.zeroes([5]utils.Mat4x4);
-            const s = utils.Mat4x4.scaling_mat(utils.Vec4.splat3(0.5));
-            transforms = .{
-                utils.Mat4x4.translation_mat(.{ .x = 0.0, .y = 0.5, .z = 0.0 }).mul_mat(s),
-                utils.Mat4x4.translation_mat(.{ .x = 0.5, .y = -0.5, .z = 0.5 }).mul_mat(s),
-                utils.Mat4x4.translation_mat(.{ .x = 0.5, .y = -0.5, .z = -0.5 }).mul_mat(s),
-                utils.Mat4x4.translation_mat(.{ .x = -0.5, .y = -0.5, .z = 0.5 }).mul_mat(s),
-                utils.Mat4x4.translation_mat(.{ .x = -0.5, .y = -0.5, .z = -0.5 }).mul_mat(s),
-            };
-
-            var _rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
-            const rng = utils.Rng.init(_rng.random());
-
-            for (0..transforms.len) |i| {
-                const scale = utils.Mat4x4.random.scale(&rng.with(.{ .min = 0.4, .max = 0.7, .flip_sign = false }));
-                const translate = utils.Mat4x4.random.translate(&rng);
-                const rot = utils.Mat4x4.random.rot(&rng);
-                const shear = utils.Mat4x4.random.shear(&rng.with(.{ .min = 0.0, .max = 0.3 }));
-
-                var mat = utils.Mat4x4.identity();
-                mat = mat.mul_mat(translate);
-                mat = mat.mul_mat(shear);
-                mat = mat.mul_mat(scale);
-                mat = mat.mul_mat(rot);
-
-                transforms[i] = mat;
-            }
+            const transforms: TransformSet = TransformSet.Builder.random().build();
 
             return .{
                 .eye = eye,
@@ -1155,7 +1245,7 @@ const Renderer = struct {
                 device.cmdBindPipeline(cmdbuf, .graphics, pipeline);
                 device.cmdBindVertexBuffers(cmdbuf, 0, 1, @ptrCast(&vertex_buffer.buffer), &[_]vk.DeviceSize{0});
                 device.cmdBindDescriptorSets(cmdbuf, .graphics, pipeline_layout, 0, 1, @ptrCast(&frag_desc_set), 0, null);
-                device.cmdDraw(cmdbuf, @intCast(vertices.items.len), uniforms.transforms.len, 0, 0);
+                device.cmdDraw(cmdbuf, @intCast(vertices.items.len), uniforms.transforms.transforms.len, 0, 0);
 
                 device.cmdEndRenderPass(cmdbuf);
                 try device.endCommandBuffer(cmdbuf);

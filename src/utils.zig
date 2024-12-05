@@ -29,8 +29,22 @@ pub const Rng = struct {
         return rn;
     }
 
-    pub fn with(self: *const @This(), c: Constraints) @This() {
-        return .{ .rng = self.rng, .constraints = c };
+    pub fn with(self: *const @This(), c: struct {
+        min: ?f32 = null,
+        max: ?f32 = null,
+        flip_sign: ?bool = null,
+    }) @This() {
+        var this = self.*;
+        if (c.min) |min| {
+            this.constraints.min = min;
+        }
+        if (c.max) |max| {
+            this.constraints.max = max;
+        }
+        if (c.flip_sign) |flip| {
+            this.constraints.flip_sign = flip;
+        }
+        return this;
     }
 };
 
@@ -85,6 +99,15 @@ pub const Vec4 = extern struct {
 
     pub fn scale(self: *const @This(), s: f32) @This() {
         return .{ .x = self.x * s, .y = self.y * s, .z = self.z * s, .w = self.w * s };
+    }
+
+    pub fn mix(self: *const @This(), other: @This(), t: f32) @This() {
+        return .{
+            .x = std.math.lerp(self.x, other.x, t),
+            .y = std.math.lerp(self.y, other.y, t),
+            .z = std.math.lerp(self.z, other.z, t),
+            .w = std.math.lerp(self.w, other.w, t),
+        };
     }
 
     pub fn splat3(t: f32) @This() {
@@ -266,21 +289,29 @@ pub const Mat4x4 = extern struct {
         } };
     }
 
-    pub fn identity() @This() {
-        return .{ .data = .{
-            .{ .x = 1, .y = 0, .z = 0, .w = 0 },
-            .{ .x = 0, .y = 1, .z = 0, .w = 0 },
-            .{ .x = 0, .y = 0, .z = 1, .w = 0 },
-            .{ .x = 0, .y = 0, .z = 0, .w = 1 },
-        } };
-    }
-
     pub fn transpose(self: *const @This()) @This() {
         return .{ .data = .{
             .{ .x = self.data[0].x, .y = self.data[1].x, .z = self.data[2].x, .w = self.data[3].x },
             .{ .x = self.data[0].y, .y = self.data[1].y, .z = self.data[2].y, .w = self.data[3].y },
             .{ .x = self.data[0].z, .y = self.data[1].z, .z = self.data[2].z, .w = self.data[3].z },
             .{ .x = self.data[0].w, .y = self.data[1].w, .z = self.data[2].w, .w = self.data[3].w },
+        } };
+    }
+
+    pub fn mix(self: *const @This(), other: *const @This(), t: f32) @This() {
+        var this = std.mem.zeroes(@This());
+        inline for (0..self.data.len) |i| {
+            this.data[i] = self.data[i].mix(other.data[i], t);
+        }
+        return this;
+    }
+
+    pub fn identity() @This() {
+        return .{ .data = .{
+            .{ .x = 1, .y = 0, .z = 0, .w = 0 },
+            .{ .x = 0, .y = 1, .z = 0, .w = 0 },
+            .{ .x = 0, .y = 0, .z = 1, .w = 0 },
+            .{ .x = 0, .y = 0, .z = 0, .w = 1 },
         } };
     }
 

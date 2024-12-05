@@ -1488,8 +1488,8 @@ const State = struct {
     frame: u32 = 0,
     time: f32 = 0,
 
-    start_transforms: Uniforms.TransformSet.Builder,
-    end_transforms: Uniforms.TransformSet.Builder,
+    transforms: Uniforms.TransformSet.Builder,
+    target_transforms: Uniforms.TransformSet.Builder,
     t: f32 = 0,
 
     rng: std.Random.Xoshiro256,
@@ -1513,8 +1513,8 @@ const State = struct {
         return .{
             .pos = pos,
             .mouse = .{ .x = mouse.x, .y = mouse.y, .left = mouse.left },
-            .start_transforms = transformers.sirpinski_pyramid(),
-            .end_transforms = Uniforms.TransformSet.Builder.random(rng.random()),
+            .transforms = transformers.sirpinski_pyramid(),
+            .target_transforms = Uniforms.TransformSet.Builder.random(rng.random()),
             .rng = rng,
         };
     }
@@ -1558,12 +1558,13 @@ const State = struct {
         self.frame += 1;
         self.time += delta;
 
-        self.t += delta / 2.0;
-        if (self.t >= 1.0) {
-            self.t = @mod(self.t, 1.0);
-
-            self.start_transforms = self.end_transforms;
-            self.end_transforms = Uniforms.TransformSet.Builder.random(self.rng.random());
+        // - [Lerp smoothing is broken](https://youtu.be/LSNQuFEDOyQ?si=-_bGNwqZFC_j5dJF&t=3012)
+        const e = 1.0 - std.math.exp(-4.0 * delta);
+        self.transforms = self.transforms.mix(&self.target_transforms, e);
+        self.t = std.math.lerp(self.t, 1.0, e);
+        if (1.0 - self.t < 0.01) {
+            self.t = 0;
+            self.target_transforms = Uniforms.TransformSet.Builder.random(self.rng.random());
         }
     }
 
@@ -1584,7 +1585,7 @@ const State = struct {
         const view_matrix = utils.Mat4x4.view(self.pos, fwd, up);
         const world_to_screen = projection_matrix.mul_mat(view_matrix);
 
-        const transforms = self.start_transforms.mix(&self.end_transforms, self.t).build();
+        const transforms = self.transforms.build();
         return .{
             .transforms = transforms,
             .world_to_screen = world_to_screen,

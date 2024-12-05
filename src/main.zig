@@ -542,6 +542,16 @@ const Renderer = struct {
                         return this;
                     }
 
+                    fn mix(self: *const @This(), other: *const @This(), t: f32) @This() {
+                        var this = std.mem.zeroes(@This());
+
+                        inline for (0..n) |i| {
+                            this.transforms[i] = self.transforms[i].mix(&other.transforms[i], t);
+                        }
+
+                        return this;
+                    }
+
                     fn build(self: *const @This()) TransformSet(n) {
                         var this = std.mem.zeroes(TransformSet(n));
 
@@ -594,7 +604,7 @@ const Renderer = struct {
             const view = utils.Mat4x4.view(eye, at, up);
             const projection = utils.Mat4x4.perspective_projection(height, width, 0.01, 100.0, std.math.pi / 3.0);
 
-            const transforms: TransformSet = TransformSet.Builder.random().build();
+            const transforms: TransformSet = transformers.sirpinski_pyramid().mix(&TransformSet.Builder.random(), 0.3).build();
 
             return .{
                 .eye = eye,

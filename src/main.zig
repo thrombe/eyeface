@@ -1558,7 +1558,13 @@ const State = struct {
         self.frame += 1;
         self.time += delta;
 
-        self.t = @mod(self.time / 10.0, 1.0);
+        self.t += delta / 2.0;
+        if (self.t >= 1.0) {
+            self.t = @mod(self.t, 1.0);
+
+            self.start_transforms = self.end_transforms;
+            self.end_transforms = Uniforms.TransformSet.Builder.random(self.rng.random());
+        }
     }
 
     fn rot_quat(self: *const @This()) utils.Vec4 {

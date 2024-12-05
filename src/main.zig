@@ -461,219 +461,18 @@ const Renderer = struct {
         pos: [4]f32,
     };
 
-    pub const transformers = struct {
-        pub fn TransformSet(n: u32) type {
-            return extern struct {
-                transforms: [n]utils.Mat4x4 = std.mem.zeroes([n]utils.Mat4x4),
-
-                const Builder = struct {
-                    transforms: [n]Transforms,
-
-                    fn init() @This() {
-                        var this = std.mem.zeroes(@This());
-
-                        inline for (0..n) |i| {
-                            this.transforms[i] = Transforms.init();
-                        }
-
-                        return this;
-                    }
-
-                    fn random(rng: std.Random) @This() {
-                        var this = std.mem.zeroes(@This());
-
-                        inline for (0..n) |i| {
-                            this.transforms[i] = Transforms.random(rng);
-                        }
-
-                        return this;
-                    }
-
-                    fn mix(self: *const @This(), other: *const @This(), t: f32) @This() {
-                        var this = std.mem.zeroes(@This());
-
-                        inline for (0..n) |i| {
-                            this.transforms[i] = self.transforms[i].mix(&other.transforms[i], t);
-                        }
-
-                        return this;
-                    }
-
-                    fn build(self: *const @This()) TransformSet(n) {
-                        var this = std.mem.zeroes(TransformSet(n));
-
-                        inline for (0..n) |i| {
-                            this.transforms[i] = self.transforms[i].combine();
-                        }
-
-                        return this;
-                    }
-
-                    const Transforms = struct {
-                        translate: utils.Mat4x4,
-                        shear: utils.Mat4x4,
-                        scale: utils.Mat4x4,
-                        rot: utils.Mat4x4,
-
-                        fn init() @This() {
-                            return .{
-                                .translate = utils.Mat4x4.identity(),
-                                .shear = utils.Mat4x4.identity(),
-                                .scale = utils.Mat4x4.identity(),
-                                .rot = utils.Mat4x4.identity(),
-                            };
-                        }
-
-                        fn random(_rng: std.Random) @This() {
-                            const rng = utils.Rng.init(_rng);
-
-                            const scale = utils.Mat4x4.random.scale(&rng.with(.{ .min = 0.4, .max = 0.7, .flip_sign = false }));
-                            const translate = utils.Mat4x4.random.translate(&rng);
-                            const rot = utils.Mat4x4.random.rot(&rng);
-                            const shear = utils.Mat4x4.random.shear(&rng.with(.{ .min = 0.0, .max = 0.3 }));
-
-                            return .{
-                                .translate = translate,
-                                .shear = shear,
-                                .scale = scale,
-                                .rot = rot,
-                            };
-                        }
-
-                        fn combine(self: *const @This()) utils.Mat4x4 {
-                            var mat = utils.Mat4x4.identity();
-                            mat = mat.mul_mat(self.translate);
-                            mat = mat.mul_mat(self.shear);
-                            mat = mat.mul_mat(self.scale);
-                            mat = mat.mul_mat(self.rot);
-                            return mat;
-                        }
-
-                        fn mix(self: *const @This(), other: *const @This(), t: f32) @This() {
-                            return .{
-                                .translate = self.translate.mix(&other.translate, t),
-                                .shear = self.shear.mix(&other.shear, t),
-                                .scale = self.scale.mix(&other.scale, t),
-                                .rot = self.rot.mix(&other.rot, t),
-                            };
-                        }
-                    };
-                };
-            };
-        }
-
-        pub fn sirpinski_pyramid() TransformSet(5).Builder {
-            var this = TransformSet(5).Builder.init();
-
-            const s = utils.Mat4x4.scaling_mat(utils.Vec4.splat3(0.5));
-
-            inline for (0..5) |i| {
-                this.transforms[i].scale = s;
-            }
-
-            this.transforms[0].translate = utils.Mat4x4.translation_mat(.{ .x = 0.0, .y = 1.0, .z = 0.0 });
-            this.transforms[1].translate = utils.Mat4x4.translation_mat(.{ .x = 1.0, .y = -1.0, .z = 1.0 });
-            this.transforms[2].translate = utils.Mat4x4.translation_mat(.{ .x = 1.0, .y = -1.0, .z = -1.0 });
-            this.transforms[3].translate = utils.Mat4x4.translation_mat(.{ .x = -1.0, .y = -1.0, .z = 1.0 });
-            this.transforms[4].translate = utils.Mat4x4.translation_mat(.{ .x = -1.0, .y = -1.0, .z = -1.0 });
-
-            return this;
-        }
-    };
-
     const Uniforms = extern struct {
         transforms: TransformSet,
-        view_matrix: utils.Mat4x4,
-        projection_matrix: utils.Mat4x4,
         world_to_screen: utils.Mat4x4,
         eye: utils.Vec4,
-        mouse: extern struct { x: i32 = 0, y: i32 = 0, left: u32 = 0, right: u32 = 0 } = .{},
-        pitch: f32 = 0,
-        yaw: f32 = 0,
-        frame: u32 = 0,
+        mouse: extern struct { x: i32, y: i32, left: u32, right: u32 },
+        frame: u32,
+        time: f32,
 
-        const TransformSet = transformers.TransformSet(5);
-
-        fn init(width: u32, height: u32) @This() {
-            const eye = utils.Vec4{ .z = -5 };
-            const up = utils.Vec4{ .y = -1 };
-            const at = utils.Vec4{ .z = 1 };
-            const view = utils.Mat4x4.view(eye, at, up);
-            const projection = utils.Mat4x4.perspective_projection(height, width, 0.01, 100.0, std.math.pi / 3.0);
-
-            var _rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
-            const rng = _rng.random();
-
-            const transforms: TransformSet = transformers.sirpinski_pyramid().mix(&TransformSet.Builder.random(rng), 0.3).build();
-
-            return .{
-                .eye = eye,
-                .view_matrix = view,
-                .projection_matrix = projection,
-                .world_to_screen = projection.mul_mat(view),
-                .transforms = transforms,
-            };
-        }
-
-        fn tick(self: *@This(), timer: *std.time.Timer, window: *Engine.Window) void {
-            const pitch_min = -std.math.pi / 2.0 + 0.1;
-            const pitch_max = std.math.pi / 2.0 - 0.1;
-            var up = utils.Vec4{ .y = -1 };
-            var fwd = utils.Vec4{ .z = 1 };
-            var right = utils.Vec4{ .x = 1 };
-            const speed = 1.0;
-            const sensitivity = 1.0;
-
-            const lap = timer.lap();
-            const delta = @as(f32, @floatFromInt(lap)) / @as(f32, @floatFromInt(std.time.ns_per_s));
-            std.debug.print("fps: {d}\n", .{@as(u32, @intFromFloat(1.0 / delta))});
-            const w = window.is_pressed(c.GLFW_KEY_W);
-            const a = window.is_pressed(c.GLFW_KEY_A);
-            const s = window.is_pressed(c.GLFW_KEY_S);
-            const d = window.is_pressed(c.GLFW_KEY_D);
-            const mouse = window.poll_mouse();
-
-            if (mouse.left) {
-                self.yaw += @as(f32, @floatFromInt(mouse.x - self.mouse.x)) * sensitivity * delta;
-                self.pitch -= @as(f32, @floatFromInt(mouse.y - self.mouse.y)) * sensitivity * delta;
-                self.pitch = std.math.clamp(self.pitch, pitch_min, pitch_max);
-            }
-
-            self.mouse.left = @intCast(@intFromBool(mouse.left));
-            self.mouse.x = mouse.x;
-            self.mouse.y = mouse.y;
-
-            var rot = utils.Vec4.quat_identity_rot();
-            rot = rot.quat_mul(utils.Vec4.quat_angle_axis(self.pitch, right));
-            rot = rot.quat_mul(utils.Vec4.quat_angle_axis(self.yaw, up));
-            rot = rot.quat_conjugate();
-
-            up = rot.rotate_vector(up);
-            fwd = rot.rotate_vector(fwd);
-            right = rot.rotate_vector(right);
-
-            if (w) {
-                self.eye = self.eye.add(fwd.scale(delta * speed));
-            }
-            if (a) {
-                self.eye = self.eye.sub(right.scale(delta * speed));
-            }
-            if (s) {
-                self.eye = self.eye.sub(fwd.scale(delta * speed));
-            }
-            if (d) {
-                self.eye = self.eye.add(right.scale(delta * speed));
-            }
-
-            const projection = utils.Mat4x4.perspective_projection(window.extent.height, window.extent.width, 0.01, 100.0, std.math.pi / 3.0);
-            self.projection_matrix = projection;
-            self.view_matrix = utils.Mat4x4.view(self.eye, fwd, up);
-            self.world_to_screen = self.projection_matrix.mul_mat(self.view_matrix);
-            self.frame += 1;
-        }
+        const TransformSet = State.transformers.TransformSet(5);
     };
 
-    fn init(engine: *Engine) !@This() {
+    fn init(engine: *Engine, state: *State) !@This() {
         var ctx = &engine.graphics;
         const device = &ctx.device;
 
@@ -1171,7 +970,7 @@ const Renderer = struct {
             allocator.free(framebuffers);
         }
 
-        const uniforms = Uniforms.init(engine.window.extent.width, engine.window.extent.height);
+        const uniforms = state.uniforms(engine.window);
 
         const command_buffers = blk: {
             const cmdbufs = try allocator.alloc(vk.CommandBuffer, framebuffers.len);
@@ -1677,6 +1476,249 @@ const Renderer = struct {
     };
 };
 
+const State = struct {
+    pos: utils.Vec4,
+    mouse: extern struct { x: i32 = 0, y: i32 = 0, left: bool = false, right: bool = false } = .{},
+    pitch: f32 = 0,
+    yaw: f32 = 0,
+
+    speed: f32 = 1.0,
+    sensitivity: f32 = 1.0,
+
+    frame: u32 = 0,
+    time: f32 = 0,
+
+    start_transforms: Uniforms.TransformSet.Builder,
+    end_transforms: Uniforms.TransformSet.Builder,
+    t: f32 = 0,
+
+    _rng: std.Random.Xoshiro256,
+    rng: std.Random,
+
+    const Uniforms = Renderer.Uniforms;
+
+    const constants = struct {
+        const pitch_min = -std.math.pi / 2.0 + 0.1;
+        const pitch_max = std.math.pi / 2.0 - 0.1;
+        const up = utils.Vec4{ .y = -1 };
+        const fwd = utils.Vec4{ .z = 1 };
+        const right = utils.Vec4{ .x = 1 };
+    };
+
+    fn init(window: *Engine.Window) @This() {
+        const pos = utils.Vec4{ .z = -5 };
+        const mouse = window.poll_mouse();
+
+        var _rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
+        const rng = _rng.random();
+
+        return .{
+            .pos = pos,
+            .mouse = .{ .x = mouse.x, .y = mouse.y, .left = mouse.left },
+            .start_transforms = transformers.sirpinski_pyramid(),
+            .end_transforms = Uniforms.TransformSet.Builder.random(rng),
+            ._rng = _rng,
+            .rng = rng,
+        };
+    }
+
+    fn tick(self: *@This(), timer: *std.time.Timer, window: *Engine.Window) void {
+        const lap = timer.lap();
+        const delta = @as(f32, @floatFromInt(lap)) / @as(f32, @floatFromInt(std.time.ns_per_s));
+        // std.debug.print("fps: {d}\n", .{@as(u32, @intFromFloat(1.0 / delta))});
+        const w = window.is_pressed(c.GLFW_KEY_W);
+        const a = window.is_pressed(c.GLFW_KEY_A);
+        const s = window.is_pressed(c.GLFW_KEY_S);
+        const d = window.is_pressed(c.GLFW_KEY_D);
+        const mouse = window.poll_mouse();
+
+        if (mouse.left) {
+            self.yaw += @as(f32, @floatFromInt(mouse.x - self.mouse.x)) * self.sensitivity * delta;
+            self.pitch -= @as(f32, @floatFromInt(mouse.y - self.mouse.y)) * self.sensitivity * delta;
+            self.pitch = std.math.clamp(self.pitch, constants.pitch_min, constants.pitch_max);
+        }
+
+        self.mouse.left = mouse.left;
+        self.mouse.x = mouse.x;
+        self.mouse.y = mouse.y;
+
+        const rot = self.rot_quat();
+        const fwd = rot.rotate_vector(constants.fwd);
+        const right = rot.rotate_vector(constants.right);
+
+        if (w) {
+            self.pos = self.pos.add(fwd.scale(delta * self.speed));
+        }
+        if (a) {
+            self.pos = self.pos.sub(right.scale(delta * self.speed));
+        }
+        if (s) {
+            self.pos = self.pos.sub(fwd.scale(delta * self.speed));
+        }
+        if (d) {
+            self.pos = self.pos.add(right.scale(delta * self.speed));
+        }
+
+        self.frame += 1;
+        self.time += delta;
+
+        self.t = @mod(self.time / 10.0, 1.0);
+    }
+
+    fn rot_quat(self: *const @This()) utils.Vec4 {
+        var rot = utils.Vec4.quat_identity_rot();
+        rot = rot.quat_mul(utils.Vec4.quat_angle_axis(self.pitch, constants.right));
+        rot = rot.quat_mul(utils.Vec4.quat_angle_axis(self.yaw, constants.up));
+        rot = rot.quat_conjugate();
+        return rot;
+    }
+
+    fn uniforms(self: *const @This(), window: *Engine.Window) Uniforms {
+        const rot = self.rot_quat();
+        const up = rot.rotate_vector(constants.up);
+        const fwd = rot.rotate_vector(constants.fwd);
+
+        const projection_matrix = utils.Mat4x4.perspective_projection(window.extent.height, window.extent.width, 0.01, 100.0, std.math.pi / 3.0);
+        const view_matrix = utils.Mat4x4.view(self.pos, fwd, up);
+        const world_to_screen = projection_matrix.mul_mat(view_matrix);
+
+        const transforms = self.start_transforms.mix(&self.end_transforms, self.t).build();
+        return .{
+            .transforms = transforms,
+            .world_to_screen = world_to_screen,
+            .eye = self.pos,
+            .mouse = .{
+                .x = self.mouse.x,
+                .y = self.mouse.y,
+                .left = @intCast(@intFromBool(self.mouse.left)),
+                .right = @intCast(@intFromBool(self.mouse.right)),
+            },
+            .frame = self.frame,
+            .time = self.time,
+        };
+    }
+
+    pub const transformers = struct {
+        pub fn TransformSet(n: u32) type {
+            return extern struct {
+                transforms: [n]utils.Mat4x4 = std.mem.zeroes([n]utils.Mat4x4),
+
+                const Builder = struct {
+                    transforms: [n]Transforms,
+
+                    fn init() @This() {
+                        var this = std.mem.zeroes(@This());
+
+                        inline for (0..n) |i| {
+                            this.transforms[i] = Transforms.init();
+                        }
+
+                        return this;
+                    }
+
+                    fn random(rng: std.Random) @This() {
+                        var this = std.mem.zeroes(@This());
+
+                        inline for (0..n) |i| {
+                            this.transforms[i] = Transforms.random(rng);
+                        }
+
+                        return this;
+                    }
+
+                    fn mix(self: *const @This(), other: *const @This(), t: f32) @This() {
+                        var this = std.mem.zeroes(@This());
+
+                        inline for (0..n) |i| {
+                            this.transforms[i] = self.transforms[i].mix(&other.transforms[i], t);
+                        }
+
+                        return this;
+                    }
+
+                    fn build(self: *const @This()) TransformSet(n) {
+                        var this = std.mem.zeroes(TransformSet(n));
+
+                        inline for (0..n) |i| {
+                            this.transforms[i] = self.transforms[i].combine();
+                        }
+
+                        return this;
+                    }
+
+                    const Transforms = struct {
+                        translate: utils.Mat4x4,
+                        shear: utils.Mat4x4,
+                        scale: utils.Mat4x4,
+                        rot: utils.Mat4x4,
+
+                        fn init() @This() {
+                            return .{
+                                .translate = utils.Mat4x4.identity(),
+                                .shear = utils.Mat4x4.identity(),
+                                .scale = utils.Mat4x4.identity(),
+                                .rot = utils.Mat4x4.identity(),
+                            };
+                        }
+
+                        fn random(_rng: std.Random) @This() {
+                            const rng = utils.Rng.init(_rng);
+
+                            const scale = utils.Mat4x4.random.scale(&rng.with(.{ .min = 0.4, .max = 0.7, .flip_sign = false }));
+                            const translate = utils.Mat4x4.random.translate(&rng);
+                            const rot = utils.Mat4x4.random.rot(&rng);
+                            const shear = utils.Mat4x4.random.shear(&rng.with(.{ .min = 0.0, .max = 0.3 }));
+
+                            return .{
+                                .translate = translate,
+                                .shear = shear,
+                                .scale = scale,
+                                .rot = rot,
+                            };
+                        }
+
+                        fn combine(self: *const @This()) utils.Mat4x4 {
+                            var mat = utils.Mat4x4.identity();
+                            mat = mat.mul_mat(self.translate);
+                            mat = mat.mul_mat(self.shear);
+                            mat = mat.mul_mat(self.scale);
+                            mat = mat.mul_mat(self.rot);
+                            return mat;
+                        }
+
+                        fn mix(self: *const @This(), other: *const @This(), t: f32) @This() {
+                            return .{
+                                .translate = self.translate.mix(&other.translate, t),
+                                .shear = self.shear.mix(&other.shear, t),
+                                .scale = self.scale.mix(&other.scale, t),
+                                .rot = self.rot.mix(&other.rot, t),
+                            };
+                        }
+                    };
+                };
+            };
+        }
+
+        pub fn sirpinski_pyramid() TransformSet(5).Builder {
+            var this = TransformSet(5).Builder.init();
+
+            const s = utils.Mat4x4.scaling_mat(utils.Vec4.splat3(0.5));
+
+            inline for (0..5) |i| {
+                this.transforms[i].scale = s;
+            }
+
+            this.transforms[0].translate = utils.Mat4x4.translation_mat(.{ .x = 0.0, .y = 1.0, .z = 0.0 });
+            this.transforms[1].translate = utils.Mat4x4.translation_mat(.{ .x = 1.0, .y = -1.0, .z = 1.0 });
+            this.transforms[2].translate = utils.Mat4x4.translation_mat(.{ .x = 1.0, .y = -1.0, .z = -1.0 });
+            this.transforms[3].translate = utils.Mat4x4.translation_mat(.{ .x = -1.0, .y = -1.0, .z = 1.0 });
+            this.transforms[4].translate = utils.Mat4x4.translation_mat(.{ .x = -1.0, .y = -1.0, .z = -1.0 });
+
+            return this;
+        }
+    };
+};
+
 const Gui = struct {
     ctx: *c.ImGuiContext,
 
@@ -1865,7 +1907,9 @@ pub fn main() !void {
         var gui = try Gui.init(engine.window);
         defer gui.deinit();
 
-        var renderer = try Renderer.init(&engine);
+        var state = State.init(engine.window);
+
+        var renderer = try Renderer.init(&engine, &state);
         defer renderer.deinit(&engine.graphics.device);
 
         var gui_renderer = try Gui.GuiRenderer.init(&engine, &renderer.swapchain);
@@ -1884,7 +1928,8 @@ pub fn main() !void {
             var show_demo_window: bool = true;
             c.ImGui_ShowDemoWindow(&show_demo_window);
 
-            renderer.uniforms.tick(&timer, engine.window);
+            state.tick(&timer, engine.window);
+            renderer.uniforms = state.uniforms(engine.window);
 
             try gui_renderer.render_end(&engine.graphics.device, &renderer);
 
@@ -1893,15 +1938,15 @@ pub fn main() !void {
             // so just wait for one frame's queue to be empty before trying to render another frame
             try engine.graphics.device.queueWaitIdle(engine.graphics.graphics_queue.handle);
 
-            const state = try renderer.present(&gui_renderer, &engine.graphics);
+            const present = try renderer.present(&gui_renderer, &engine.graphics);
             // IDK: this never triggers :/
-            if (state == .suboptimal) {
-                std.debug.print("{any}\n", .{state});
+            if (present == .suboptimal) {
+                std.debug.print("{any}\n", .{present});
             }
 
-            if (engine.window.resize_fuse.unfuse() or state == .suboptimal) {
+            if (engine.window.resize_fuse.unfuse() or present == .suboptimal) {
                 renderer.deinit(&engine.graphics.device);
-                renderer = try Renderer.init(&engine);
+                renderer = try Renderer.init(&engine, &state);
 
                 gui_renderer.deinit(&engine.graphics.device);
                 gui_renderer = try Gui.GuiRenderer.init(&engine, &renderer.swapchain);

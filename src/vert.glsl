@@ -9,14 +9,11 @@ struct Mouse {
 
 layout(set = 0, binding = 0) uniform Ubo {
     mat4 transforms[5];
-    mat4 view_matrix;
-    mat4 projection_matrix;
     mat4 world_to_screen;
     vec4 eye;
     Mouse mouse;
-    float pitch;
-    float yaw;
     uint frame;
+    float time;
 } ubo;
 
 struct Vertex {

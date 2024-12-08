@@ -424,6 +424,11 @@ const Renderer = struct {
     uniforms: Uniforms,
     uniform_buffer: vk.Buffer,
     uniform_memory: vk.DeviceMemory,
+    vertex_buffer_memory: vk.DeviceMemory,
+    vertex_buffer: vk.Buffer,
+    depth_image: vk.Image,
+    depth_buffer_memory: vk.DeviceMemory,
+    depth_image_view: vk.ImageView,
     descriptor_pool: vk.DescriptorPool,
     frag_descriptor_set_layout: vk.DescriptorSetLayout,
     frag_descriptor_set: vk.DescriptorSet,
@@ -437,8 +442,6 @@ const Renderer = struct {
     // framebuffers are objects containing views of swapchain images
     framebuffers: []vk.Framebuffer,
     command_pool: vk.CommandPool,
-    vertex_buffer_memory: vk.DeviceMemory,
-    vertex_buffer: vk.Buffer,
     // command buffers are recordings of a bunch of commands that a gpu can execute
     command_buffers: []vk.CommandBuffer,
 
@@ -548,6 +551,64 @@ const Renderer = struct {
         };
         errdefer device.destroyBuffer(vertex_buffer.buffer, null);
         errdefer device.freeMemory(vertex_buffer.memory, null);
+
+        const depth_image = blk: {
+            const img = try device.createImage(&.{
+                .image_type = .@"2d",
+                .format = .d32_sfloat,
+                .extent = .{
+                    .width = engine.window.extent.width,
+                    .height = engine.window.extent.height,
+                    .depth = 1,
+                },
+                .mip_levels = 1,
+                .array_layers = 1,
+                .samples = .{ .@"1_bit" = true },
+                .tiling = .optimal,
+                .usage = .{
+                    .depth_stencil_attachment_bit = true,
+                },
+                .sharing_mode = .exclusive,
+                .initial_layout = .undefined,
+            }, null);
+            errdefer device.destroyImage(img, null);
+
+            const mem_reqs = device.getImageMemoryRequirements(img);
+            const memory = try ctx.allocate(mem_reqs, .{ .device_local_bit = true });
+            errdefer device.freeMemory(memory, null);
+            try device.bindImageMemory(img, memory, 0);
+
+            const view = try device.createImageView(&.{
+                .image = img,
+                .view_type = .@"2d",
+                .format = .d32_sfloat,
+                .components = .{
+                    .r = .identity,
+                    .g = .identity,
+                    .b = .identity,
+                    .a = .identity,
+                },
+                .subresource_range = .{
+                    .aspect_mask = .{ .depth_bit = true },
+                    .base_mip_level = 0,
+                    .level_count = 1,
+                    .base_array_layer = 0,
+                    .layer_count = 1,
+                },
+            }, null);
+            errdefer device.destroyImageView(view, null);
+
+            break :blk .{
+                .image = img,
+                .memory = memory,
+                .view = view,
+            };
+        };
+        errdefer {
+            device.destroyImageView(depth_image.view, null);
+            device.freeMemory(depth_image.memory, null);
+            device.destroyImage(depth_image.image, null);
+        }
 
         const frag_desc_set_layout = try device.createDescriptorSetLayout(&.{
             .flags = .{},
@@ -750,6 +811,19 @@ const Renderer = struct {
         defer allocator.free(compute_spv);
 
         const pass = blk: {
+            const subpass = vk.SubpassDescription{
+                .pipeline_bind_point = .graphics,
+                .color_attachment_count = 1,
+                .p_color_attachments = @ptrCast(&vk.AttachmentReference{
+                    .attachment = 0,
+                    .layout = .color_attachment_optimal,
+                }),
+                .p_depth_stencil_attachment = @ptrCast(&vk.AttachmentReference{
+                    .attachment = 1,
+                    .layout = .depth_stencil_attachment_optimal,
+                }),
+            };
+
             const color_attachment = vk.AttachmentDescription{
                 .format = swapchain.surface_format.format,
                 .samples = .{ .@"1_bit" = true },
@@ -761,22 +835,59 @@ const Renderer = struct {
                 .final_layout = .color_attachment_optimal,
             };
 
-            const color_attachment_ref = vk.AttachmentReference{
-                .attachment = 0,
-                .layout = .color_attachment_optimal,
+            const depth_attachment = vk.AttachmentDescription{
+                .format = .d32_sfloat,
+                .samples = .{ .@"1_bit" = true },
+                .load_op = .clear,
+                .store_op = .dont_care,
+                .stencil_load_op = .dont_care,
+                .stencil_store_op = .dont_care,
+                .initial_layout = .undefined,
+                .final_layout = .depth_stencil_attachment_optimal,
             };
 
-            const subpass = vk.SubpassDescription{
-                .pipeline_bind_point = .graphics,
-                .color_attachment_count = 1,
-                .p_color_attachments = @ptrCast(&color_attachment_ref),
+            const attachments = [_]vk.AttachmentDescription{ color_attachment, depth_attachment };
+
+            const deps = [_]vk.SubpassDependency{
+                .{
+                    .src_subpass = vk.SUBPASS_EXTERNAL,
+                    .dst_subpass = 0,
+                    .src_stage_mask = .{
+                        .color_attachment_output_bit = true,
+                    },
+                    .dst_stage_mask = .{
+                        .color_attachment_output_bit = true,
+                    },
+                    // src_access_mask: AccessFlags = .{},
+                    .dst_access_mask = .{
+                        .color_attachment_write_bit = true,
+                    },
+                    // dependency_flags: DependencyFlags = .{},
+                },
+                .{
+                    .src_subpass = vk.SUBPASS_EXTERNAL,
+                    .dst_subpass = 0,
+                    .src_stage_mask = .{
+                        .early_fragment_tests_bit = true,
+                    },
+                    .dst_stage_mask = .{
+                        .early_fragment_tests_bit = true,
+                    },
+                    // src_access_mask: AccessFlags = .{},
+                    .dst_access_mask = .{
+                        .depth_stencil_attachment_write_bit = true,
+                    },
+                    // dependency_flags: DependencyFlags = .{},
+                },
             };
 
             break :blk try device.createRenderPass(&.{
-                .attachment_count = 1,
-                .p_attachments = @ptrCast(&color_attachment),
+                .attachment_count = @intCast(attachments.len),
+                .p_attachments = &attachments,
                 .subpass_count = 1,
                 .p_subpasses = @ptrCast(&subpass),
+                .dependency_count = @intCast(deps.len),
+                .p_dependencies = &deps,
             }, null);
         };
         errdefer device.destroyRenderPass(pass, null);
@@ -913,6 +1024,34 @@ const Renderer = struct {
                 .p_dynamic_states = &dynstate,
             };
 
+            const depth_stencil_info = vk.PipelineDepthStencilStateCreateInfo{
+                .depth_test_enable = vk.TRUE,
+                .depth_write_enable = vk.TRUE,
+                .depth_compare_op = .less,
+                .depth_bounds_test_enable = vk.FALSE,
+                .stencil_test_enable = vk.FALSE,
+                .front = .{
+                    .fail_op = .keep,
+                    .pass_op = .replace,
+                    .depth_fail_op = .keep,
+                    .compare_op = .always,
+                    .compare_mask = 0xFF,
+                    .write_mask = 0xFF,
+                    .reference = 1,
+                },
+                .back = .{
+                    .fail_op = .keep,
+                    .pass_op = .replace,
+                    .depth_fail_op = .keep,
+                    .compare_op = .always,
+                    .compare_mask = 0xFF,
+                    .write_mask = 0xFF,
+                    .reference = 1,
+                },
+                .min_depth_bounds = 0.0,
+                .max_depth_bounds = 1.0,
+            };
+
             const gpci = vk.GraphicsPipelineCreateInfo{
                 .flags = .{},
                 .stage_count = 2,
@@ -923,7 +1062,7 @@ const Renderer = struct {
                 .p_viewport_state = &pvsci,
                 .p_rasterization_state = &prsci,
                 .p_multisample_state = &pmsci,
-                .p_depth_stencil_state = null,
+                .p_depth_stencil_state = &depth_stencil_info,
                 .p_color_blend_state = &pcbsci,
                 .p_dynamic_state = &pdsci,
                 .layout = pipeline_layout,
@@ -952,10 +1091,11 @@ const Renderer = struct {
             var i_2: usize = 0;
             errdefer for (framebuffers[0..i_2]) |fb| device.destroyFramebuffer(fb, null);
             for (framebuffers) |*fb| {
+                const attachments = [_]vk.ImageView{ swapchain.swap_images[i_2].view, depth_image.view };
                 fb.* = try device.createFramebuffer(&.{
                     .render_pass = pass,
-                    .attachment_count = 1,
-                    .p_attachments = @ptrCast(&swapchain.swap_images[i_2].view),
+                    .attachment_count = attachments.len,
+                    .p_attachments = &attachments,
                     .width = swapchain.extent.width,
                     .height = swapchain.extent.height,
                     .layers = 1,
@@ -983,9 +1123,17 @@ const Renderer = struct {
             }, cmdbufs.ptr);
             errdefer device.freeCommandBuffers(pool, @intCast(cmdbufs.len), cmdbufs.ptr);
 
-            const clear = vk.ClearValue{
-                .color = .{
-                    .float_32 = utils.ColorParse.hex_xyzw(utils.Vec4, "#282828ff").gamma_correct_inv().to_buf(),
+            const clear = [_]vk.ClearValue{
+                .{
+                    .color = .{
+                        .float_32 = utils.ColorParse.hex_xyzw(utils.Vec4, "#282828ff").gamma_correct_inv().to_buf(),
+                    },
+                },
+                .{
+                    .depth_stencil = .{
+                        .depth = 1.0,
+                        .stencil = 0,
+                    },
                 },
             };
 
@@ -1047,8 +1195,8 @@ const Renderer = struct {
                         .offset = .{ .x = 0, .y = 0 },
                         .extent = swapchain.extent,
                     },
-                    .clear_value_count = 1,
-                    .p_clear_values = @ptrCast(&clear),
+                    .clear_value_count = clear.len,
+                    .p_clear_values = &clear,
                 }, .@"inline");
 
                 device.cmdBindPipeline(cmdbuf, .graphics, pipeline);
@@ -1072,6 +1220,11 @@ const Renderer = struct {
             .uniforms = uniforms,
             .uniform_buffer = uniform_buffer,
             .uniform_memory = uniform_buffer_memory,
+            .vertex_buffer_memory = vertex_buffer.memory,
+            .vertex_buffer = vertex_buffer.buffer,
+            .depth_image = depth_image.image,
+            .depth_buffer_memory = depth_image.memory,
+            .depth_image_view = depth_image.view,
             .descriptor_pool = desc_pool,
             .frag_descriptor_set_layout = frag_desc_set_layout,
             .frag_descriptor_set = frag_desc_set,
@@ -1084,8 +1237,6 @@ const Renderer = struct {
             .pipeline = pipeline,
             .framebuffers = framebuffers,
             .command_pool = pool,
-            .vertex_buffer_memory = vertex_buffer.memory,
-            .vertex_buffer = vertex_buffer.buffer,
             .command_buffers = command_buffers,
         };
     }
@@ -1102,6 +1253,11 @@ const Renderer = struct {
         defer {
             device.destroyBuffer(self.vertex_buffer, null);
             device.freeMemory(self.vertex_buffer_memory, null);
+        }
+        defer {
+            device.destroyImageView(self.depth_image_view, null);
+            device.freeMemory(self.depth_buffer_memory, null);
+            device.destroyImage(self.depth_image, null);
         }
         defer device.destroyDescriptorSetLayout(self.frag_descriptor_set_layout, null);
         defer device.destroyDescriptorSetLayout(self.compute_descriptor_set_layout, null);
@@ -1783,6 +1939,8 @@ const GuiEngine = struct {
         cmd_pool: vk.CommandPool,
         cmd_bufs: []vk.CommandBuffer,
 
+        framebuffers: []vk.Framebuffer,
+
         fn init(engine: *Engine, swapchain: *Renderer.Swapchain) !@This() {
             const device = &engine.graphics.device;
 
@@ -1836,6 +1994,32 @@ const GuiEngine = struct {
             }, null);
             errdefer device.destroyRenderPass(pass, null);
 
+            const framebuffers = blk: {
+                const framebuffers = try allocator.alloc(vk.Framebuffer, swapchain.swap_images.len);
+                errdefer allocator.free(framebuffers);
+
+                var i_2: usize = 0;
+                errdefer for (framebuffers[0..i_2]) |fb| device.destroyFramebuffer(fb, null);
+                for (framebuffers) |*fb| {
+                    const attachments = [_]vk.ImageView{swapchain.swap_images[i_2].view};
+                    fb.* = try device.createFramebuffer(&.{
+                        .render_pass = pass,
+                        .attachment_count = attachments.len,
+                        .p_attachments = &attachments,
+                        .width = swapchain.extent.width,
+                        .height = swapchain.extent.height,
+                        .layers = 1,
+                    }, null);
+                    i_2 += 1;
+                }
+
+                break :blk framebuffers;
+            };
+            errdefer {
+                for (framebuffers) |fb| device.destroyFramebuffer(fb, null);
+                allocator.free(framebuffers);
+            }
+
             const cmdbufs = try allocator.alloc(vk.CommandBuffer, swapchain.swap_images.len);
             errdefer allocator.free(cmdbufs);
 
@@ -1872,6 +2056,7 @@ const GuiEngine = struct {
                 .desc_pool = desc_pool,
                 .cmd_pool = cmd_pool,
                 .pass = pass,
+                .framebuffers = framebuffers,
                 .cmd_bufs = cmdbufs,
             };
         }
@@ -1889,7 +2074,7 @@ const GuiEngine = struct {
 
             const index = renderer.swapchain.image_index;
             const cmdbuf = self.cmd_bufs[index];
-            const framebuffer = renderer.framebuffers[index];
+            const framebuffer = self.framebuffers[index];
 
             try device.resetCommandBuffer(cmdbuf, .{ .release_resources_bit = true });
             try device.beginCommandBuffer(cmdbuf, &.{});
@@ -1913,6 +2098,10 @@ const GuiEngine = struct {
             defer device.destroyDescriptorPool(self.desc_pool, null);
             defer device.destroyRenderPass(self.pass, null);
             defer device.destroyCommandPool(self.cmd_pool, null);
+            defer {
+                for (self.framebuffers) |fb| device.destroyFramebuffer(fb, null);
+                allocator.free(self.framebuffers);
+            }
             defer {
                 device.freeCommandBuffers(self.cmd_pool, @intCast(self.cmd_bufs.len), self.cmd_bufs.ptr);
                 allocator.free(self.cmd_bufs);

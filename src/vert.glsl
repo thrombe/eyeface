@@ -23,14 +23,14 @@ struct Vertex {
 
 layout(location = 0) in vec3 i_pos;
 
-layout(location = 0) out vec3 o_color;
+layout(location = 0) out vec3 o_pos;
 
 void main() {
     vec4 pos = vec4(i_pos, 1.0);
 
     pos = ubo.transforms[gl_InstanceIndex] * pos;
-    pos = ubo.world_to_screen * pos;
+    o_pos = pos.xyz;
 
+    pos = ubo.world_to_screen * pos;
     gl_Position = pos;
-    o_color = vec3(1.0);
 }

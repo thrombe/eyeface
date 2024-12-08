@@ -116,6 +116,7 @@
           vulkan-validation-layers
           libxkbcommon
           wayland
+          libGL.dev
 
           zig
 

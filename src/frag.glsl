@@ -12,6 +12,12 @@ layout(set = 0, binding = 0) uniform Ubo {
     mat4 world_to_screen;
     vec4 eye;
     Mouse mouse;
+    vec4 occlusion_color;
+    vec4 sparse_color;
+    float occlusion_multiplier;
+    float occlusion_attenuation;
+    float _pad1;
+    float _pad2;
     vec4 voxel_grid_center;
     float voxel_grid_half_size;
     int voxel_grid_side;
@@ -58,14 +64,11 @@ void main() {
     int index = to1D(ivec3(pos), side);
 
     float o = 1.0 - occlusion[index];
-	o = pow(clamp(o * 1.0, 0.0, 1.0), 2.0);
-
-	vec3 col2 = vec3(0.9, 0.9, 0.9);
-	vec3 col1 = vec3(0.1, 0.0, 0.0);
+	o = pow(clamp(o * ubo.occlusion_multiplier, 0.0, 1.0), ubo.occlusion_attenuation);
 
 	if (inGrid(ivec3(pos))) {
-    	f_color = vec4(mix(col1, col2, o), 1);
+    	f_color = vec4(mix(ubo.occlusion_color.xyz, ubo.sparse_color.xyz, o), 1);
 	} else {
-	    f_color = vec4(vec3(0.0), 1);
+	    f_color = vec4(vec3(d), 1);
 	}
 }

@@ -12,6 +12,12 @@ layout(set = 0, binding = 0) uniform Ubo {
     mat4 world_to_screen;
     vec4 eye;
     Mouse mouse;
+    vec4 occlusion_color;
+    vec4 sparse_color;
+    float occlusion_multiplier;
+    float occlusion_attenuation;
+    float _pad1;
+    float _pad2;
     vec4 voxel_grid_center;
     float voxel_grid_half_size;
     int voxel_grid_side;

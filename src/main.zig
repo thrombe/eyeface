@@ -475,6 +475,12 @@ const Renderer = struct {
         world_to_screen: utils.Mat4x4,
         eye: utils.Vec4,
         mouse: extern struct { x: i32, y: i32, left: u32, right: u32 },
+        occlusion_color: utils.Vec4,
+        sparse_color: utils.Vec4,
+        occlusion_multiplier: f32,
+        occlusion_attenuation: f32,
+        _pad1: f32 = 0,
+        _pad2: f32 = 0,
         voxel_grid_center: utils.Vec4,
         voxel_grid_half_size: f32,
         voxel_grid_side: u32,
@@ -1884,6 +1890,11 @@ const State = struct {
     pause_generator: bool = false,
     points_x_64: u32 = 50000,
 
+    occlusion_color: utils.Vec4 = .{ .x = 0.1, .y = 0.0, .z = 0.0 },
+    sparse_color: utils.Vec4 = .{ .x = 0.9, .y = 0.9, .z = 0.9 },
+    occlusion_multiplier: f32 = 1.0,
+    occlusion_attenuation: f32 = 2.0,
+
     voxels: struct {
         // world space coords of center of the the voxel grid
         center: utils.Vec4 = .{},
@@ -2005,6 +2016,10 @@ const State = struct {
             .voxel_grid_center = self.voxels.center,
             .voxel_grid_half_size = self.voxels.half_size,
             .voxel_grid_side = self.voxels.side,
+            .occlusion_color = self.occlusion_color,
+            .sparse_color = self.sparse_color,
+            .occlusion_multiplier = self.occlusion_multiplier,
+            .occlusion_attenuation = self.occlusion_attenuation,
             .frame = self.frame,
             .time = self.time,
         };
@@ -2492,6 +2507,12 @@ const GuiState = struct {
         _ = c.ImGui_SliderFloat("Sensitivity", &state.sensitivity, 0.1, 10.0);
 
         _ = c.ImGui_SliderInt("Points (x 64)", @ptrCast(&state.points_x_64), 100, 200000);
+
+        _ = c.ImGui_ColorEdit3("Occlusion Color", @ptrCast(&state.occlusion_color), c.ImGuiColorEditFlags_Float);
+        _ = c.ImGui_ColorEdit3("Sparse Color", @ptrCast(&state.sparse_color), c.ImGuiColorEditFlags_Float);
+
+        _ = c.ImGui_SliderFloat("Occlusion Multiplier", &state.occlusion_multiplier, 0.1, 10.0);
+        _ = c.ImGui_SliderFloat("Occlusion Attenuation", &state.occlusion_attenuation, 0.1, 10.0);
 
         _ = c.ImGui_SliderFloat("Lambda", &state.lambda, 0.1, 25.0);
         _ = c.ImGui_Checkbox("Pause Time (pause_t)", &state.pause_t);

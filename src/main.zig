@@ -2033,24 +2033,24 @@ const State = struct {
                     }
 
                     const Transforms = struct {
-                        translate: utils.Mat4x4,
+                        translate: utils.Vec4,
                         shear: struct {
                             x: utils.Vec4,
                             y: utils.Vec4,
                             z: utils.Vec4,
                         },
-                        scale: utils.Mat4x4,
+                        scale: utils.Vec4,
                         rot: utils.Vec4,
 
                         fn init() @This() {
                             return .{
-                                .translate = utils.Mat4x4.identity(),
+                                .translate = utils.Vec4{},
                                 .shear = .{
                                     .x = utils.Vec4{},
                                     .y = utils.Vec4{},
                                     .z = utils.Vec4{},
                                 },
-                                .scale = utils.Mat4x4.identity(),
+                                .scale = utils.Vec4.splat3(1),
                                 .rot = utils.Vec4.quat_identity_rot(),
                             };
                         }
@@ -2058,8 +2058,8 @@ const State = struct {
                         fn random(_rng: std.Random) @This() {
                             const rng = utils.Rng.init(_rng);
 
-                            const scale = utils.Mat4x4.random.scale(&rng.with(.{ .min = 0.4, .max = 0.75, .flip_sign = false }));
-                            const translate = utils.Mat4x4.random.translate(&rng.with(.{ .min = -1.0, .max = 1.0, .flip_sign = false }));
+                            const scale = utils.Vec4.random.vec3(&rng.with(.{ .min = 0.4, .max = 0.75, .flip_sign = false }));
+                            const translate = utils.Vec4.random.vec3(&rng.with(.{ .min = -1.0, .max = 1.0, .flip_sign = false }));
                             const rot = utils.Vec4.random.vec4(&rng.with(.{ .min = -std.math.pi / 6.0, .max = std.math.pi / 4.0 }));
 
                             const r = rng.with(.{ .min = -0.2, .max = 0.2, .flip_sign = false });
@@ -2079,7 +2079,7 @@ const State = struct {
 
                         fn combine(self: *const @This()) utils.Mat4x4 {
                             var mat = utils.Mat4x4.identity();
-                            mat = mat.mul_mat(self.scale);
+                            mat = mat.mul_mat(utils.Mat4x4.scaling_mat(self.scale));
                             mat = mat.mul_mat(utils.Mat4x4.rot_mat_euler_angles(self.rot));
                             const shearx = utils.Mat4x4.shear_mat(.{
                                 .y = self.shear.x.y,
@@ -2096,19 +2096,19 @@ const State = struct {
                             mat = mat.mul_mat(shearz);
                             mat = mat.mul_mat(sheary);
                             mat = mat.mul_mat(shearx);
-                            mat = mat.mul_mat(self.translate);
+                            mat = mat.mul_mat(utils.Mat4x4.translation_mat(self.translate));
                             return mat;
                         }
 
                         fn mix(self: *const @This(), other: *const @This(), t: f32) @This() {
                             return .{
-                                .translate = self.translate.mix(&other.translate, t),
+                                .translate = self.translate.mix(other.translate, t),
                                 .shear = .{
                                     .x = self.shear.x.mix(other.shear.x, t),
                                     .y = self.shear.y.mix(other.shear.y, t),
                                     .z = self.shear.z.mix(other.shear.z, t),
                                 },
-                                .scale = self.scale.mix(&other.scale, t),
+                                .scale = self.scale.mix(other.scale, t),
                                 .rot = self.rot.mix(other.rot, t),
                             };
                         }
@@ -2120,17 +2120,17 @@ const State = struct {
         pub fn sirpinski_pyramid() TransformSet(5).Builder {
             var this = TransformSet(5).Builder.init();
 
-            const s = utils.Mat4x4.scaling_mat(utils.Vec4.splat3(0.5));
+            const s = utils.Vec4.splat3(0.5);
 
             inline for (0..5) |i| {
                 this.transforms[i].scale = s;
             }
 
-            this.transforms[0].translate = utils.Mat4x4.translation_mat(.{ .x = 0.0, .y = 1.0, .z = 0.0 });
-            this.transforms[1].translate = utils.Mat4x4.translation_mat(.{ .x = 1.0, .y = -1.0, .z = 1.0 });
-            this.transforms[2].translate = utils.Mat4x4.translation_mat(.{ .x = 1.0, .y = -1.0, .z = -1.0 });
-            this.transforms[3].translate = utils.Mat4x4.translation_mat(.{ .x = -1.0, .y = -1.0, .z = 1.0 });
-            this.transforms[4].translate = utils.Mat4x4.translation_mat(.{ .x = -1.0, .y = -1.0, .z = -1.0 });
+            this.transforms[0].translate = .{ .x = 0.0, .y = 1.0, .z = 0.0 };
+            this.transforms[1].translate = .{ .x = 1.0, .y = -1.0, .z = 1.0 };
+            this.transforms[2].translate = .{ .x = 1.0, .y = -1.0, .z = -1.0 };
+            this.transforms[3].translate = .{ .x = -1.0, .y = -1.0, .z = 1.0 };
+            this.transforms[4].translate = .{ .x = -1.0, .y = -1.0, .z = -1.0 };
 
             return this;
         }

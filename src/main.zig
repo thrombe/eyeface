@@ -2058,8 +2058,8 @@ const State = struct {
                         fn random(_rng: std.Random) @This() {
                             const rng = utils.Rng.init(_rng);
 
-                            const scale = utils.Mat4x4.random.scale(&rng.with(.{ .min = 0.4, .max = 0.7, .flip_sign = false }));
-                            const translate = utils.Mat4x4.random.translate(&rng);
+                            const scale = utils.Mat4x4.random.scale(&rng.with(.{ .min = 0.4, .max = 0.75, .flip_sign = false }));
+                            const translate = utils.Mat4x4.random.translate(&rng.with(.{ .min = -1.0, .max = 1.0, .flip_sign = false }));
                             const rot = utils.Vec4.random.vec4(&rng.with(.{ .min = -std.math.pi / 6.0, .max = std.math.pi / 4.0 }));
 
                             const r = rng.with(.{ .min = -0.2, .max = 0.2, .flip_sign = false });

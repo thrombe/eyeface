@@ -50,7 +50,22 @@ ivec3 to3D(int id, int side) {
     return pos;
 }
 
+bool inGrid(ivec3 pos) {
+    if (any(lessThan(pos, ivec3(0)))) {
+        return false;
+    }
+    if (any(greaterThan(pos, ivec3(ubo.voxel_grid_side)))) {
+        return false;
+    }
+    
+    return true;
+}
+
 float voxelGridSample(ivec3 pos) {
+    if (!inGrid(pos)) {
+        return 0;
+    }
+
     return float(voxels[to1D(pos, ubo.voxel_grid_side)] > 0);
 }
 

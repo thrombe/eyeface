@@ -43,6 +43,18 @@ uint rand_xorshift(uint state) {
     return state;
 }
 
+
+bool inGrid(ivec3 pos) {
+    if (any(lessThan(pos, ivec3(0)))) {
+        return false;
+    }
+    if (any(greaterThan(pos, ivec3(ubo.voxel_grid_side)))) {
+        return false;
+    }
+    
+    return true;
+}
+
 int to1D(ivec3 pos, int size) {
     return pos.x + pos.y * size + pos.z * size * size;
 }
@@ -62,5 +74,7 @@ void main() {
     pos /= ubo.voxel_grid_half_size;
     pos *= float(side);
     pos += float(side)/2.0;
-    voxels[to1D(ivec3(pos), side)] += 1;
+    if (inGrid(ivec3(pos))) {
+        voxels[to1D(ivec3(pos), side)] += 1;
+    }
 }

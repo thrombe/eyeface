@@ -2501,8 +2501,6 @@ const GuiState = struct {
     fn editState(self: *@This(), state: *State) void {
         _ = self;
 
-        const width = 75.0;
-
         _ = c.ImGui_SliderFloat("Speed", &state.speed, 0.1, 10.0);
         _ = c.ImGui_SliderFloat("Sensitivity", &state.sensitivity, 0.1, 10.0);
 
@@ -2518,15 +2516,7 @@ const GuiState = struct {
         _ = c.ImGui_Checkbox("Pause Time (pause_t)", &state.pause_t);
         _ = c.ImGui_Checkbox("Pause Generator (pause_generator)", &state.pause_generator);
 
-        c.ImGui_Text("Voxels Center:");
-        c.ImGui_SetNextItemWidth(width);
-        _ = c.ImGui_InputFloat("X##centerX", &state.voxels.center.x);
-        c.ImGui_SameLine();
-        c.ImGui_SetNextItemWidth(width);
-        _ = c.ImGui_InputFloat("Y##centerY", &state.voxels.center.y);
-        c.ImGui_SameLine();
-        c.ImGui_SetNextItemWidth(width);
-        _ = c.ImGui_InputFloat("Z##centerZ", &state.voxels.center.z);
+        _ = c.ImGui_DragFloat3("Voxels Center", @ptrCast(&state.voxels.center));
 
         _ = c.ImGui_SliderFloat("Voxel Half Size", &state.voxels.half_size, 0.1, 10.0);
         _ = c.ImGui_SliderInt("Voxel Side", @ptrCast(&state.voxels.side), 1, 500);
@@ -2546,10 +2536,10 @@ const GuiState = struct {
         const width = 75.0;
 
         c.ImGui_SetNextItemWidth(width);
-        _ = c.ImGui_InputFloat(label ++ " Min", &constraint.min);
+        _ = c.ImGui_DragFloat(label ++ " Min", &constraint.min);
         c.ImGui_SameLine();
         c.ImGui_SetNextItemWidth(width);
-        _ = c.ImGui_InputFloat(label ++ " Max", &constraint.max);
+        _ = c.ImGui_DragFloat(label ++ " Max", &constraint.max);
         c.ImGui_SameLine();
         _ = c.ImGui_Checkbox(label ++ " Flip Sign", &constraint.flip_sign);
     }

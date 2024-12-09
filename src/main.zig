@@ -2430,15 +2430,65 @@ const GuiEngine = struct {
 };
 
 const GuiState = struct {
-    fn tick(self: *@This(), lap: u64) void {
-        _ = self;
+    const TransformSet = Renderer.Uniforms.TransformSet;
+    const Constraints = TransformSet.Builder.Generator.Constraints;
+    const ShearConstraints = TransformSet.Builder.Generator.ShearConstraints;
+    const Vec3Constraints = TransformSet.Builder.Generator.Vec3Constraints;
+
+    fn tick(self: *@This(), state: *State, lap: u64) void {
         const delta = @as(f32, @floatFromInt(lap)) / @as(f32, @floatFromInt(std.time.ns_per_s));
+        const generator = &state.transform_generator;
 
         c.ImGui_SetNextWindowPos(.{ .x = 5, .y = 5 }, c.ImGuiCond_Once);
         defer c.ImGui_End();
         if (c.ImGui_Begin("SIKE", null, c.ImGuiWindowFlags_None)) {
             c.ImGui_Text("Application average %.3f ms/frame (%.1f FPS)", delta, 1.0 / delta);
+
+            c.ImGui_Text("Scale");
+            self.editVec3Constraints("Scale", &generator.scale);
+
+            c.ImGui_Text("Rotation");
+            self.editVec3Constraints("Rotation", &generator.rot);
+
+            c.ImGui_Text("Translation");
+            self.editVec3Constraints("Translation", &generator.translate);
+
+            c.ImGui_Text("Shear");
+            self.editShear("Shear", &generator.shear);
         }
+    }
+
+    fn editVec3Constraints(self: *@This(), comptime label: [:0]const u8, constraints: *Vec3Constraints) void {
+        c.ImGui_PushID(label);
+        self.editConstraint(".X", &constraints.x);
+        self.editConstraint(".Y", &constraints.y);
+        self.editConstraint(".Z", &constraints.z);
+        c.ImGui_PopID();
+    }
+
+    fn editConstraint(self: *@This(), comptime label: [:0]const u8, constraint: *Constraints) void {
+        _ = self;
+
+        const width = 75.0;
+
+        c.ImGui_SetNextItemWidth(width);
+        _ = c.ImGui_InputFloat(label ++ " Min", &constraint.min);
+        c.ImGui_SameLine();
+        c.ImGui_SetNextItemWidth(width);
+        _ = c.ImGui_InputFloat(label ++ " Max", &constraint.max);
+        c.ImGui_SameLine();
+        _ = c.ImGui_Checkbox(label ++ " Flip Sign", &constraint.flip_sign);
+    }
+
+    fn editShear(self: *@This(), comptime label: [:0]const u8, shear: *ShearConstraints) void {
+        c.ImGui_PushID(label);
+        self.editConstraint(".X.y", &shear.x.y);
+        self.editConstraint(".X.z", &shear.x.z);
+        self.editConstraint(".Y.x", &shear.y.x);
+        self.editConstraint(".Y.z", &shear.y.z);
+        self.editConstraint(".Z.x", &shear.z.x);
+        self.editConstraint(".Z.y", &shear.z.y);
+        c.ImGui_PopID();
     }
 };
 
@@ -2474,7 +2524,7 @@ pub fn main() !void {
             renderer.uniforms = state.uniforms(engine.window);
 
             gui_renderer.render_start();
-            gui_state.tick(lap);
+            gui_state.tick(&state, lap);
             try gui_renderer.render_end(&engine.graphics.device, &renderer);
 
             // multiple framebuffers => multiple descriptor sets => different buffers

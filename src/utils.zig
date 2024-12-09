@@ -6,7 +6,7 @@ pub const Rng = struct {
     rng: std.Random,
     constraints: Constraints = .{},
 
-    const Constraints = struct {
+    pub const Constraints = struct {
         min: f32 = -1,
         max: f32 = 1,
         flip_sign: bool = false,
@@ -44,6 +44,12 @@ pub const Rng = struct {
         if (c.flip_sign) |flip| {
             this.constraints.flip_sign = flip;
         }
+        return this;
+    }
+
+    pub fn with2(self: *const @This(), c: Constraints) @This() {
+        var this = self.*;
+        this.constraints = c;
         return this;
     }
 };

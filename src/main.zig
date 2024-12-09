@@ -1871,6 +1871,7 @@ const State = struct {
     frame: u32 = 0,
     time: f32 = 0,
 
+    transform_generator: Uniforms.TransformSet.Builder.Generator = .{},
     transforms: Uniforms.TransformSet.Builder,
     target_transforms: Uniforms.TransformSet.Builder,
     t: f32 = 0,
@@ -1893,11 +1894,14 @@ const State = struct {
 
         var rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
 
+        const generator = Uniforms.TransformSet.Builder.Generator{};
+
         return .{
             .pos = pos,
             .mouse = .{ .x = mouse.x, .y = mouse.y, .left = mouse.left },
             .transforms = transformers.sirpinski_pyramid(),
-            .target_transforms = Uniforms.TransformSet.Builder.random(rng.random()),
+            .target_transforms = generator.generate(rng.random()),
+            .transform_generator = generator,
             .rng = rng,
         };
     }
@@ -1947,7 +1951,7 @@ const State = struct {
         self.t = std.math.lerp(self.t, 1.0, e);
         if (1.0 - self.t < 0.01) {
             self.t = 0;
-            self.target_transforms = Uniforms.TransformSet.Builder.random(self.rng.random());
+            self.target_transforms = self.transform_generator.generate(self.rng.random());
         }
     }
 
@@ -2055,28 +2059,6 @@ const State = struct {
                             };
                         }
 
-                        fn random(_rng: std.Random) @This() {
-                            const rng = utils.Rng.init(_rng);
-
-                            const scale = utils.Vec4.random.vec3(&rng.with(.{ .min = 0.4, .max = 0.75, .flip_sign = false }));
-                            const translate = utils.Vec4.random.vec3(&rng.with(.{ .min = -1.0, .max = 1.0, .flip_sign = false }));
-                            const rot = utils.Vec4.random.vec4(&rng.with(.{ .min = -std.math.pi / 6.0, .max = std.math.pi / 4.0 }));
-
-                            const r = rng.with(.{ .min = -0.2, .max = 0.2, .flip_sign = false });
-                            const shear = .{
-                                .x = utils.Vec4.random.vec4(&r),
-                                .y = utils.Vec4.random.vec4(&r),
-                                .z = utils.Vec4.random.vec4(&r),
-                            };
-
-                            return .{
-                                .translate = translate,
-                                .shear = shear,
-                                .scale = scale,
-                                .rot = rot,
-                            };
-                        }
-
                         fn combine(self: *const @This()) utils.Mat4x4 {
                             var mat = utils.Mat4x4.identity();
                             mat = mat.mul_mat(utils.Mat4x4.scaling_mat(self.scale));
@@ -2111,6 +2093,82 @@ const State = struct {
                                 .scale = self.scale.mix(other.scale, t),
                                 .rot = self.rot.mix(other.rot, t),
                             };
+                        }
+                    };
+
+                    const Generator = struct {
+                        scale: Vec3Constraints = Vec3Constraints.splat(.{ .min = 0.4, .max = 0.75 }),
+                        rot: Vec3Constraints = Vec3Constraints.splat(.{
+                            .min = -std.math.pi / 6.0,
+                            .max = std.math.pi / 4.0,
+                        }),
+                        translate: Vec3Constraints = Vec3Constraints.splat(.{ .min = -1.0, .max = 1.0 }),
+                        shear: struct {
+                            x: struct {
+                                y: Constraints = .{ .min = -0.2, .max = 0.2 },
+                                z: Constraints = .{ .min = -0.2, .max = 0.2 },
+                            } = .{},
+                            y: struct {
+                                x: Constraints = .{ .min = -0.2, .max = 0.2 },
+                                z: Constraints = .{ .min = -0.2, .max = 0.2 },
+                            } = .{},
+                            z: struct {
+                                x: Constraints = .{ .min = -0.2, .max = 0.2 },
+                                y: Constraints = .{ .min = -0.2, .max = 0.2 },
+                            } = .{},
+                        } = .{},
+
+                        const Constraints = utils.Rng.Constraints;
+                        const Vec3Constraints = struct {
+                            x: Constraints = .{},
+                            y: Constraints = .{},
+                            z: Constraints = .{},
+
+                            pub fn splat(constraint: Constraints) @This() {
+                                return .{
+                                    .x = constraint,
+                                    .y = constraint,
+                                    .z = constraint,
+                                };
+                            }
+
+                            pub fn random(self: *const @This(), _rng: std.Random) utils.Vec4 {
+                                const rng = utils.Rng.init(_rng);
+                                return .{
+                                    .x = rng.with2(self.x).next(),
+                                    .y = rng.with2(self.x).next(),
+                                    .z = rng.with2(self.x).next(),
+                                };
+                            }
+                        };
+
+                        pub fn generate(self: *const @This(), _rng: std.Random) Builder {
+                            var builder = std.mem.zeroes(Builder);
+                            const rng = utils.Rng.init(_rng);
+
+                            inline for (0..n) |i| {
+                                builder.transforms[i] = .{
+                                    .translate = self.translate.random(_rng),
+                                    .scale = self.scale.random(_rng),
+                                    .rot = self.rot.random(_rng),
+                                    .shear = .{
+                                        .x = .{
+                                            .y = rng.with2(self.shear.x.y).next(),
+                                            .z = rng.with2(self.shear.x.z).next(),
+                                        },
+                                        .y = .{
+                                            .x = rng.with2(self.shear.y.x).next(),
+                                            .z = rng.with2(self.shear.y.z).next(),
+                                        },
+                                        .z = .{
+                                            .x = rng.with2(self.shear.z.x).next(),
+                                            .y = rng.with2(self.shear.z.y).next(),
+                                        },
+                                    },
+                                };
+                            }
+
+                            return builder;
                         }
                     };
                 };

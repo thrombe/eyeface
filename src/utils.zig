@@ -372,6 +372,28 @@ pub const Mat4x4 = extern struct {
         } };
     }
 
+    pub fn rot_mat_euler_angles(vec3: Vec4) @This() {
+        const rotz = (@This(){ .data = .{
+            .{ .x = @cos(vec3.z), .y = -@sin(vec3.z), .z = 0 },
+            .{ .x = @sin(vec3.z), .y = @cos(vec3.z), .z = 0 },
+            .{ .x = 0, .y = 0, .z = 1 },
+            .{ .w = 1 },
+        } }).transpose();
+        const roty = (@This(){ .data = .{
+            .{ .x = @cos(vec3.y), .y = 0, .z = @sin(vec3.y) },
+            .{ .x = 0, .y = 1, .z = 0 },
+            .{ .x = -@sin(vec3.y), .y = 0, .z = @cos(vec3.y) },
+            .{ .w = 1 },
+        } }).transpose();
+        const rotx = (@This(){ .data = .{
+            .{ .x = 1, .y = 0, .z = 0 },
+            .{ .x = 0, .y = @cos(vec3.x), .z = -@sin(vec3.x) },
+            .{ .x = 0, .y = @sin(vec3.x), .z = @cos(vec3.x) },
+            .{ .w = 1 },
+        } }).transpose();
+        return roty.mul_mat(rotx).mul_mat(rotz);
+    }
+
     pub fn rot_mat_from_quat(rot: Vec4) @This() {
         const x = Vec4{ .x = 1 };
         const y = Vec4{ .y = 1 };

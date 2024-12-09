@@ -1879,6 +1879,8 @@ const State = struct {
     target_transforms: Uniforms.TransformSet.Builder,
 
     t: f32 = 0,
+    pause_t: bool = false,
+    pause_generator: bool = false,
 
     voxels: struct {
         // world space coords of center of the the voxel grid
@@ -1958,11 +1960,13 @@ const State = struct {
         self.frame += 1;
         self.time += delta;
 
-        // - [Lerp smoothing is broken](https://youtu.be/LSNQuFEDOyQ?si=-_bGNwqZFC_j5dJF&t=3012)
-        const e = 1.0 - std.math.exp(-1.0 * delta);
-        self.transforms = self.transforms.mix(&self.target_transforms, e);
-        self.t = std.math.lerp(self.t, 1.0, e);
-        if (1.0 - self.t < 0.01) {
+        if (!self.pause_t) {
+            // - [Lerp smoothing is broken](https://youtu.be/LSNQuFEDOyQ?si=-_bGNwqZFC_j5dJF&t=3012)
+            const e = 1.0 - std.math.exp(-1.0 * delta);
+            self.transforms = self.transforms.mix(&self.target_transforms, e);
+            self.t = std.math.lerp(self.t, 1.0, e);
+        }
+        if (1.0 - self.t < 0.01 and !self.pause_generator) {
             self.t = 0;
             self.target_transforms = self.transform_generator.generate(self.rng.random());
         }
@@ -2495,6 +2499,10 @@ const GuiState = struct {
         _ = c.ImGui_SliderFloat("Voxel Half Size", &state.voxels.half_size, 0.1, 10.0);
 
         _ = c.ImGui_SliderInt("Voxel Side", @ptrCast(&state.voxels.side), 1, 500);
+
+        _ = c.ImGui_Checkbox("Pause Time (pause_t)", &state.pause_t);
+
+        _ = c.ImGui_Checkbox("Pause Generator (pause_generator)", &state.pause_generator);
 
         _ = c.ImGui_SliderFloat("Speed", &state.speed, 0.1, 10.0);
 

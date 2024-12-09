@@ -426,9 +426,15 @@ const Renderer = struct {
     uniform_memory: vk.DeviceMemory,
     vertex_buffer_memory: vk.DeviceMemory,
     vertex_buffer: vk.Buffer,
+    // - [Depth buffering - Vulkan Tutorial](https://vulkan-tutorial.com/Depth_buffering)
+    // - [Setting up depth buffer - Vulkan Guide](https://vkguide.dev/docs/chapter-3/depth_buffer/)
     depth_image: vk.Image,
     depth_buffer_memory: vk.DeviceMemory,
     depth_image_view: vk.ImageView,
+    voxel_buffer: vk.Buffer,
+    voxel_buffer_memory: vk.DeviceMemory,
+    occlusion_buffer: vk.Buffer,
+    occlusion_buffer_memory: vk.DeviceMemory,
     descriptor_pool: vk.DescriptorPool,
     frag_descriptor_set_layout: vk.DescriptorSetLayout,
     frag_descriptor_set: vk.DescriptorSet,
@@ -436,7 +442,7 @@ const Renderer = struct {
     compute_descriptor_set: vk.DescriptorSet,
     pass: vk.RenderPass,
     compute_pipeline_layout: vk.PipelineLayout,
-    compute_pipeline: vk.Pipeline,
+    compute_pipelines: []vk.Pipeline,
     pipeline_layout: vk.PipelineLayout,
     pipeline: vk.Pipeline,
     // framebuffers are objects containing views of swapchain images
@@ -508,7 +514,7 @@ const Renderer = struct {
 
         var vertices = std.ArrayList(Vertex).init(allocator);
         defer vertices.deinit();
-        try vertices.appendNTimes(.{ .pos = .{ 0, 0, 0, 1 } }, 64 * 80000);
+        try vertices.appendNTimes(.{ .pos = .{ 0, 0, 0, 1 } }, 64 * 50000);
 
         const vertex_buffer = blk: {
             const buffer = try device.createBuffer(&.{
@@ -552,6 +558,8 @@ const Renderer = struct {
         errdefer device.destroyBuffer(vertex_buffer.buffer, null);
         errdefer device.freeMemory(vertex_buffer.memory, null);
 
+        // apparently you don't need to create more than 1 depth buffer even if you have many
+        // framebuffers
         const depth_image = blk: {
             const img = try device.createImage(&.{
                 .image_type = .@"2d",
@@ -610,63 +618,153 @@ const Renderer = struct {
             device.destroyImage(depth_image.image, null);
         }
 
+        const voxels = blk: {
+            const vol_size = 300;
+            const voxel_buffer = try device.createBuffer(&.{
+                .size = @sizeOf(u32) * vol_size * vol_size * vol_size,
+                .usage = .{
+                    .storage_buffer_bit = true,
+                },
+                .sharing_mode = .exclusive,
+            }, null);
+            errdefer device.destroyBuffer(voxel_buffer, null);
+
+            const mem_reqs = device.getBufferMemoryRequirements(voxel_buffer);
+            const voxel_memory = try ctx.allocate(mem_reqs, .{ .device_local_bit = true });
+            errdefer device.freeMemory(voxel_memory, null);
+            try device.bindBufferMemory(voxel_buffer, voxel_memory, 0);
+
+            const occlusion_buffer = try device.createBuffer(&.{
+                .size = @sizeOf(u32) * vol_size * vol_size * vol_size,
+                .usage = .{
+                    .storage_buffer_bit = true,
+                },
+                .sharing_mode = .exclusive,
+            }, null);
+            errdefer device.destroyBuffer(occlusion_buffer, null);
+
+            const occlusion_memory = try ctx.allocate(
+                device.getBufferMemoryRequirements(occlusion_buffer),
+                .{ .device_local_bit = true },
+            );
+            errdefer device.freeMemory(occlusion_memory, null);
+            try device.bindBufferMemory(occlusion_buffer, occlusion_memory, 0);
+
+            break :blk .{
+                .voxel_buffer_memory = voxel_memory,
+                .voxel_buffer = voxel_buffer,
+                .occlusion_buffer_memory = occlusion_memory,
+                .occlusion_buffer = occlusion_buffer,
+            };
+        };
+        errdefer {
+            device.destroyBuffer(voxels.voxel_buffer, null);
+            device.freeMemory(voxels.voxel_buffer_memory, null);
+            device.destroyBuffer(voxels.occlusion_buffer, null);
+            device.freeMemory(voxels.occlusion_buffer_memory, null);
+        }
+
+        const frag_bindings = [_]vk.DescriptorSetLayoutBinding{
+            .{
+                .binding = 0,
+                .descriptor_type = .uniform_buffer,
+                .descriptor_count = 1,
+                .stage_flags = .{
+                    .vertex_bit = true,
+                    .fragment_bit = true,
+                    .compute_bit = true,
+                },
+            },
+            .{
+                .binding = 1,
+                .descriptor_type = .storage_buffer,
+                .descriptor_count = 1,
+                .stage_flags = .{
+                    .vertex_bit = true,
+                    .fragment_bit = true,
+                    .compute_bit = true,
+                },
+            },
+            .{
+                .binding = 2,
+                .descriptor_type = .storage_buffer,
+                .descriptor_count = 1,
+                .stage_flags = .{
+                    .vertex_bit = true,
+                    .fragment_bit = true,
+                    .compute_bit = true,
+                },
+            },
+        };
         const frag_desc_set_layout = try device.createDescriptorSetLayout(&.{
             .flags = .{},
-            .binding_count = 1,
-            .p_bindings = &[_]vk.DescriptorSetLayoutBinding{
-                .{
-                    .binding = 0,
-                    .descriptor_type = .uniform_buffer,
-                    .descriptor_count = 1,
-                    .stage_flags = .{
-                        .vertex_bit = true,
-                        .fragment_bit = true,
-                        .compute_bit = true,
-                    },
-                },
-            },
+            .binding_count = frag_bindings.len,
+            .p_bindings = &frag_bindings,
         }, null);
         errdefer device.destroyDescriptorSetLayout(frag_desc_set_layout, null);
+
+        const compute_bindings = [_]vk.DescriptorSetLayoutBinding{
+            .{
+                .binding = 0,
+                .descriptor_type = .uniform_buffer,
+                .descriptor_count = 1,
+                .stage_flags = .{
+                    .vertex_bit = true,
+                    .fragment_bit = true,
+                    .compute_bit = true,
+                },
+            },
+            .{
+                .binding = 1,
+                .descriptor_type = .storage_buffer,
+                .descriptor_count = 1,
+                .stage_flags = .{
+                    .vertex_bit = true,
+                    .fragment_bit = true,
+                    .compute_bit = true,
+                },
+            },
+            .{
+                .binding = 2,
+                .descriptor_type = .storage_buffer,
+                .descriptor_count = 1,
+                .stage_flags = .{
+                    .vertex_bit = true,
+                    .fragment_bit = true,
+                    .compute_bit = true,
+                },
+            },
+            .{
+                .binding = 3,
+                .descriptor_type = .storage_buffer,
+                .descriptor_count = 1,
+                .stage_flags = .{
+                    .vertex_bit = true,
+                    .fragment_bit = true,
+                    .compute_bit = true,
+                },
+            },
+        };
         const compute_desc_set_layout = try device.createDescriptorSetLayout(&.{
             .flags = .{},
-            .binding_count = 2,
-            .p_bindings = &[_]vk.DescriptorSetLayoutBinding{
-                .{
-                    .binding = 0,
-                    .descriptor_type = .uniform_buffer,
-                    .descriptor_count = 1,
-                    .stage_flags = .{
-                        .vertex_bit = true,
-                        .fragment_bit = true,
-                        .compute_bit = true,
-                    },
-                },
-                .{
-                    .binding = 1,
-                    .descriptor_type = .storage_buffer,
-                    .descriptor_count = 1,
-                    .stage_flags = .{
-                        .vertex_bit = true,
-                        .fragment_bit = true,
-                        .compute_bit = true,
-                    },
-                },
-            },
+            .binding_count = compute_bindings.len,
+            .p_bindings = &compute_bindings,
         }, null);
         errdefer device.destroyDescriptorSetLayout(compute_desc_set_layout, null);
+        const pool_sizes = [_]vk.DescriptorPoolSize{
+            .{
+                .type = .uniform_buffer,
+                .descriptor_count = 1,
+            },
+            .{
+                .type = .storage_buffer,
+                .descriptor_count = 3,
+            },
+        };
         const desc_pool = try device.createDescriptorPool(&.{
             .max_sets = 2,
-            .pool_size_count = 2,
-            .p_pool_sizes = &[_]vk.DescriptorPoolSize{
-                .{
-                    .type = .uniform_buffer,
-                    .descriptor_count = 1,
-                },
-                .{
-                    .type = .storage_buffer,
-                    .descriptor_count = 1,
-                },
-            },
+            .pool_size_count = pool_sizes.len,
+            .p_pool_sizes = &pool_sizes,
         }, null);
         errdefer device.destroyDescriptorPool(desc_pool, null);
         var frag_desc_set: vk.DescriptorSet = undefined;
@@ -681,23 +779,55 @@ const Renderer = struct {
             .descriptor_set_count = 1,
             .p_set_layouts = @ptrCast(&compute_desc_set_layout),
         }, @ptrCast(&compute_desc_set));
-        device.updateDescriptorSets(1, &[_]vk.WriteDescriptorSet{.{
-            .dst_set = frag_desc_set,
-            .dst_binding = 0,
-            .dst_array_element = 0,
-            .descriptor_count = 1,
-            .descriptor_type = .uniform_buffer,
-            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
-                .buffer = uniform_buffer,
-                .offset = 0,
-                .range = @sizeOf(Uniforms),
-            }},
-
-            // OOF: ??
-            .p_image_info = undefined,
-            .p_texel_buffer_view = undefined,
-        }}, 0, null);
-        device.updateDescriptorSets(2, &[_]vk.WriteDescriptorSet{
+        const frag_desc_set_updates = [_]vk.WriteDescriptorSet{
+            .{
+                .dst_set = frag_desc_set,
+                .dst_binding = 0,
+                .dst_array_element = 0,
+                .descriptor_count = 1,
+                .descriptor_type = .uniform_buffer,
+                .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                    .buffer = uniform_buffer,
+                    .offset = 0,
+                    .range = @sizeOf(Uniforms),
+                }},
+                // OOF: ??
+                .p_image_info = undefined,
+                .p_texel_buffer_view = undefined,
+            },
+            .{
+                .dst_set = frag_desc_set,
+                .dst_binding = 1,
+                .dst_array_element = 0,
+                .descriptor_count = 1,
+                .descriptor_type = .storage_buffer,
+                .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                    .buffer = voxels.voxel_buffer,
+                    .offset = 0,
+                    .range = vk.WHOLE_SIZE,
+                }},
+                // OOF: ??
+                .p_image_info = undefined,
+                .p_texel_buffer_view = undefined,
+            },
+            .{
+                .dst_set = frag_desc_set,
+                .dst_binding = 2,
+                .dst_array_element = 0,
+                .descriptor_count = 1,
+                .descriptor_type = .storage_buffer,
+                .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                    .buffer = voxels.occlusion_buffer,
+                    .offset = 0,
+                    .range = vk.WHOLE_SIZE,
+                }},
+                // OOF: ??
+                .p_image_info = undefined,
+                .p_texel_buffer_view = undefined,
+            },
+        };
+        device.updateDescriptorSets(frag_desc_set_updates.len, &frag_desc_set_updates, 0, null);
+        const compute_desc_set_updates = [_]vk.WriteDescriptorSet{
             .{
                 .dst_set = compute_desc_set,
                 .dst_binding = 0,
@@ -728,7 +858,38 @@ const Renderer = struct {
                 .p_image_info = undefined,
                 .p_texel_buffer_view = undefined,
             },
-        }, 0, null);
+            .{
+                .dst_set = compute_desc_set,
+                .dst_binding = 2,
+                .dst_array_element = 0,
+                .descriptor_count = 1,
+                .descriptor_type = .storage_buffer,
+                .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                    .buffer = voxels.voxel_buffer,
+                    .offset = 0,
+                    .range = vk.WHOLE_SIZE,
+                }},
+                // OOF: ??
+                .p_image_info = undefined,
+                .p_texel_buffer_view = undefined,
+            },
+            .{
+                .dst_set = compute_desc_set,
+                .dst_binding = 3,
+                .dst_array_element = 0,
+                .descriptor_count = 1,
+                .descriptor_type = .storage_buffer,
+                .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                    .buffer = voxels.occlusion_buffer,
+                    .offset = 0,
+                    .range = vk.WHOLE_SIZE,
+                }},
+                // OOF: ??
+                .p_image_info = undefined,
+                .p_texel_buffer_view = undefined,
+            },
+        };
+        device.updateDescriptorSets(compute_desc_set_updates.len, &compute_desc_set_updates, 0, null);
 
         var compiler = utils.Glslc.Compiler{ .opt = .fast, .env = .vulkan1_3 };
         const vert_spv = blk: {
@@ -783,32 +944,6 @@ const Renderer = struct {
             }
         };
         defer allocator.free(frag_spv);
-        const compute_spv = blk: {
-            compiler.stage = .compute;
-            const frag: utils.Glslc.Compiler.Code = .{ .path = .{
-                .main = "./src/compute.glsl",
-                .include = &[_][]const u8{},
-                .definitions = &[_][]const u8{},
-            } };
-            // _ = compiler.dump_assembly(allocator, &frag);
-            const res = try compiler.compile(
-                allocator,
-                &frag,
-                .spirv,
-            );
-            switch (res) {
-                .Err => |msg| {
-                    std.debug.print("{s}\n", .{msg.msg});
-                    allocator.free(msg.msg);
-                    return msg.err;
-                },
-                .Ok => |ok| {
-                    errdefer allocator.free(ok);
-                    break :blk ok;
-                },
-            }
-        };
-        defer allocator.free(compute_spv);
 
         const pass = blk: {
             const subpass = vk.SubpassDescription{
@@ -898,30 +1033,84 @@ const Renderer = struct {
             .p_set_layouts = @ptrCast(&compute_desc_set_layout),
         }, null);
         errdefer device.destroyPipelineLayout(compute_pipeline_layout, null);
-        const compute_pipeline = blk: {
-            const compute = try device.createShaderModule(&.{
-                .code_size = compute_spv.len * @sizeOf(u32),
-                .p_code = @ptrCast(compute_spv.ptr),
-            }, null);
-            defer device.destroyShaderModule(compute, null);
-
-            const cpci = vk.ComputePipelineCreateInfo{
-                .stage = .{
-                    .stage = .{
-                        .compute_bit = true,
-                    },
-                    .module = compute,
-                    .p_name = "main",
+        const compute_pipelines = blk: {
+            var pipelines = [_]struct {
+                path: [:0]const u8,
+                group_x: u32 = 1,
+                group_y: u32 = 1,
+                group_z: u32 = 1,
+                pipeline: vk.Pipeline = undefined,
+            }{
+                .{
+                    .path = "./src/clear_bufs.glsl",
+                    .group_x = 300 * 300 * 300 / 64,
                 },
-                .layout = compute_pipeline_layout,
-                .base_pipeline_index = undefined,
+                .{
+                    .path = "./src/iterate.glsl",
+                    .group_x = @intCast(vertices.items.len / 64),
+                },
+                .{
+                    .path = "./src/occlusion.glsl",
+                    .group_x = 300 * 300 * 300 / 64,
+                },
             };
 
-            var pipeline: vk.Pipeline = undefined;
-            _ = try device.createComputePipelines(.null_handle, 1, @ptrCast(&cpci), null, @ptrCast(&pipeline));
-            break :blk pipeline;
+            for (pipelines, 0..) |p, i| {
+                const compute_spv = blk1: {
+                    compiler.stage = .compute;
+                    const frag: utils.Glslc.Compiler.Code = .{ .path = .{
+                        .main = p.path,
+                        .include = &[_][]const u8{},
+                        .definitions = &[_][]const u8{},
+                    } };
+                    // _ = compiler.dump_assembly(allocator, &frag);
+                    const res = try compiler.compile(
+                        allocator,
+                        &frag,
+                        .spirv,
+                    );
+                    switch (res) {
+                        .Err => |msg| {
+                            std.debug.print("{s}\n", .{msg.msg});
+                            allocator.free(msg.msg);
+                            return msg.err;
+                        },
+                        .Ok => |ok| {
+                            errdefer allocator.free(ok);
+                            break :blk1 ok;
+                        },
+                    }
+                };
+                defer allocator.free(compute_spv);
+
+                const compute = try device.createShaderModule(&.{
+                    .code_size = compute_spv.len * @sizeOf(u32),
+                    .p_code = @ptrCast(compute_spv.ptr),
+                }, null);
+                defer device.destroyShaderModule(compute, null);
+
+                const cpci = vk.ComputePipelineCreateInfo{
+                    .stage = .{
+                        .stage = .{
+                            .compute_bit = true,
+                        },
+                        .module = compute,
+                        .p_name = "main",
+                    },
+                    .layout = compute_pipeline_layout,
+                    .base_pipeline_index = undefined,
+                };
+
+                _ = try device.createComputePipelines(.null_handle, 1, @ptrCast(&cpci), null, @ptrCast(&pipelines[i].pipeline));
+            }
+
+            break :blk pipelines;
         };
-        errdefer device.destroyPipeline(compute_pipeline, null);
+        errdefer {
+            for (compute_pipelines) |p| {
+                device.destroyPipeline(p.pipeline, null);
+            }
+        }
 
         const pipeline_layout = try device.createPipelineLayout(&.{
             .flags = .{},
@@ -1153,9 +1342,26 @@ const Renderer = struct {
             for (cmdbufs, framebuffers) |cmdbuf, framebuffer| {
                 try device.beginCommandBuffer(cmdbuf, &.{});
 
-                device.cmdBindPipeline(cmdbuf, .compute, compute_pipeline);
-                device.cmdBindDescriptorSets(cmdbuf, .compute, compute_pipeline_layout, 0, 1, @ptrCast(&compute_desc_set), 0, null);
-                device.cmdDispatch(cmdbuf, @intCast(vertices.items.len / 64), 1, 1);
+                for (compute_pipelines) |p| {
+                    device.cmdBindPipeline(cmdbuf, .compute, p.pipeline);
+                    device.cmdBindDescriptorSets(cmdbuf, .compute, compute_pipeline_layout, 0, 1, @ptrCast(&compute_desc_set), 0, null);
+                    device.cmdDispatch(cmdbuf, p.group_x, p.group_y, p.group_z);
+
+                    device.cmdPipelineBarrier(cmdbuf, .{
+                        .compute_shader_bit = true,
+                    }, .{
+                        .compute_shader_bit = true,
+                    }, .{}, 1, &[_]vk.MemoryBarrier{.{
+                        .src_access_mask = .{
+                            .shader_read_bit = true,
+                            .shader_write_bit = true,
+                        },
+                        .dst_access_mask = .{
+                            .shader_read_bit = true,
+                            .shader_write_bit = true,
+                        },
+                    }}, 0, null, 0, null);
+                }
 
                 // device.cmdPipelineBarrier(cmdbuf, .{
                 //     .compute_shader_bit = true,
@@ -1225,6 +1431,10 @@ const Renderer = struct {
             .depth_image = depth_image.image,
             .depth_buffer_memory = depth_image.memory,
             .depth_image_view = depth_image.view,
+            .voxel_buffer = voxels.voxel_buffer,
+            .voxel_buffer_memory = voxels.voxel_buffer_memory,
+            .occlusion_buffer = voxels.occlusion_buffer,
+            .occlusion_buffer_memory = voxels.occlusion_buffer_memory,
             .descriptor_pool = desc_pool,
             .frag_descriptor_set_layout = frag_desc_set_layout,
             .frag_descriptor_set = frag_desc_set,
@@ -1232,7 +1442,13 @@ const Renderer = struct {
             .compute_descriptor_set = compute_desc_set,
             .pass = pass,
             .compute_pipeline_layout = compute_pipeline_layout,
-            .compute_pipeline = compute_pipeline,
+            .compute_pipelines = blk: {
+                const pipelines = try allocator.alloc(vk.Pipeline, compute_pipelines.len);
+                for (compute_pipelines, 0..) |p, i| {
+                    pipelines[i] = p.pipeline;
+                }
+                break :blk pipelines;
+            },
             .pipeline_layout = pipeline_layout,
             .pipeline = pipeline,
             .framebuffers = framebuffers,
@@ -1259,13 +1475,24 @@ const Renderer = struct {
             device.freeMemory(self.depth_buffer_memory, null);
             device.destroyImage(self.depth_image, null);
         }
+        defer {
+            device.destroyBuffer(self.voxel_buffer, null);
+            device.freeMemory(self.voxel_buffer_memory, null);
+            device.destroyBuffer(self.occlusion_buffer, null);
+            device.freeMemory(self.occlusion_buffer_memory, null);
+        }
         defer device.destroyDescriptorSetLayout(self.frag_descriptor_set_layout, null);
         defer device.destroyDescriptorSetLayout(self.compute_descriptor_set_layout, null);
         defer device.destroyDescriptorPool(self.descriptor_pool, null);
 
         defer device.destroyRenderPass(self.pass, null);
         defer device.destroyPipelineLayout(self.compute_pipeline_layout, null);
-        defer device.destroyPipeline(self.compute_pipeline, null);
+        defer {
+            for (self.compute_pipelines) |p| {
+                device.destroyPipeline(p, null);
+            }
+            allocator.free(self.compute_pipelines);
+        }
         defer device.destroyPipelineLayout(self.pipeline_layout, null);
         defer device.destroyPipeline(self.pipeline, null);
 
@@ -1715,7 +1942,7 @@ const State = struct {
         self.time += delta;
 
         // - [Lerp smoothing is broken](https://youtu.be/LSNQuFEDOyQ?si=-_bGNwqZFC_j5dJF&t=3012)
-        const e = 1.0 - std.math.exp(-4.0 * delta);
+        const e = 1.0 - std.math.exp(-1.0 * delta);
         self.transforms = self.transforms.mix(&self.target_transforms, e);
         self.t = std.math.lerp(self.t, 1.0, e);
         if (1.0 - self.t < 0.01) {

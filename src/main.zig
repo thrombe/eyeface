@@ -2034,14 +2034,22 @@ const State = struct {
 
                     const Transforms = struct {
                         translate: utils.Mat4x4,
-                        shear: utils.Mat4x4,
+                        shear: struct {
+                            x: utils.Vec4,
+                            y: utils.Vec4,
+                            z: utils.Vec4,
+                        },
                         scale: utils.Mat4x4,
                         rot: utils.Vec4,
 
                         fn init() @This() {
                             return .{
                                 .translate = utils.Mat4x4.identity(),
-                                .shear = utils.Mat4x4.identity(),
+                                .shear = .{
+                                    .x = utils.Vec4{},
+                                    .y = utils.Vec4{},
+                                    .z = utils.Vec4{},
+                                },
                                 .scale = utils.Mat4x4.identity(),
                                 .rot = utils.Vec4.quat_identity_rot(),
                             };
@@ -2052,8 +2060,14 @@ const State = struct {
 
                             const scale = utils.Mat4x4.random.scale(&rng.with(.{ .min = 0.4, .max = 0.7, .flip_sign = false }));
                             const translate = utils.Mat4x4.random.translate(&rng);
-                            const shear = utils.Mat4x4.random.shear(&rng.with(.{ .min = 0.0, .max = 0.3 }));
                             const rot = utils.Vec4.random.vec4(&rng.with(.{ .min = -std.math.pi / 6.0, .max = std.math.pi / 4.0 }));
+
+                            const r = rng.with(.{ .min = -0.2, .max = 0.2, .flip_sign = false });
+                            const shear = .{
+                                .x = utils.Vec4.random.vec4(&r),
+                                .y = utils.Vec4.random.vec4(&r),
+                                .z = utils.Vec4.random.vec4(&r),
+                            };
 
                             return .{
                                 .translate = translate,
@@ -2065,17 +2079,35 @@ const State = struct {
 
                         fn combine(self: *const @This()) utils.Mat4x4 {
                             var mat = utils.Mat4x4.identity();
-                            mat = mat.mul_mat(self.translate);
-                            mat = mat.mul_mat(self.shear);
                             mat = mat.mul_mat(self.scale);
                             mat = mat.mul_mat(utils.Mat4x4.rot_mat_euler_angles(self.rot));
+                            const shearx = utils.Mat4x4.shear_mat(.{
+                                .y = self.shear.x.y,
+                                .z = self.shear.x.z,
+                            }, .{}, .{});
+                            const sheary = utils.Mat4x4.shear_mat(.{}, .{
+                                .x = self.shear.y.x,
+                                .z = self.shear.y.z,
+                            }, .{});
+                            const shearz = utils.Mat4x4.shear_mat(.{}, .{}, .{
+                                .x = self.shear.z.x,
+                                .y = self.shear.z.y,
+                            });
+                            mat = mat.mul_mat(shearz);
+                            mat = mat.mul_mat(sheary);
+                            mat = mat.mul_mat(shearx);
+                            mat = mat.mul_mat(self.translate);
                             return mat;
                         }
 
                         fn mix(self: *const @This(), other: *const @This(), t: f32) @This() {
                             return .{
                                 .translate = self.translate.mix(&other.translate, t),
-                                .shear = self.shear.mix(&other.shear, t),
+                                .shear = .{
+                                    .x = self.shear.x.mix(other.shear.x, t),
+                                    .y = self.shear.y.mix(other.shear.y, t),
+                                    .z = self.shear.z.mix(other.shear.z, t),
+                                },
                                 .scale = self.scale.mix(&other.scale, t),
                                 .rot = self.rot.mix(other.rot, t),
                             };

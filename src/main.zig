@@ -1879,6 +1879,7 @@ const State = struct {
     target_transforms: Uniforms.TransformSet.Builder,
 
     t: f32 = 0,
+    lambda: f32 = 1.0,
     pause_t: bool = false,
     pause_generator: bool = false,
 
@@ -1962,7 +1963,7 @@ const State = struct {
 
         if (!self.pause_t) {
             // - [Lerp smoothing is broken](https://youtu.be/LSNQuFEDOyQ?si=-_bGNwqZFC_j5dJF&t=3012)
-            const e = 1.0 - std.math.exp(-1.0 * delta);
+            const e = 1.0 - std.math.exp(-self.lambda * delta);
             self.transforms = self.transforms.mix(&self.target_transforms, e);
             self.t = std.math.lerp(self.t, 1.0, e);
         }
@@ -2486,6 +2487,7 @@ const GuiState = struct {
 
         const width = 75.0;
 
+        _ = c.ImGui_SliderFloat("Lambda", &state.lambda, 0.1, 25.0);
         c.ImGui_Text("Voxels Center:");
         c.ImGui_SetNextItemWidth(width);
         _ = c.ImGui_InputFloat("X##centerX", &state.voxels.center.x);

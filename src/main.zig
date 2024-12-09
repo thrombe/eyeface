@@ -1324,7 +1324,7 @@ const Renderer = struct {
             const clear = [_]vk.ClearValue{
                 .{
                     .color = .{
-                        .float_32 = utils.ColorParse.hex_xyzw(utils.Vec4, "#282828ff").gamma_correct_inv().to_buf(),
+                        .float_32 = state.background_color.gamma_correct_inv().to_buf(),
                     },
                 },
                 .{
@@ -1890,6 +1890,7 @@ const State = struct {
     pause_generator: bool = false,
     points_x_64: u32 = 50000,
 
+    background_color: utils.Vec4 = utils.ColorParse.hex_xyzw(utils.Vec4, "#282828ff"),
     occlusion_color: utils.Vec4 = .{ .x = 0.1, .y = 0.0, .z = 0.0 },
     sparse_color: utils.Vec4 = .{ .x = 0.9, .y = 0.9, .z = 0.9 },
     occlusion_multiplier: f32 = 1.0,
@@ -2506,6 +2507,7 @@ const GuiState = struct {
 
         _ = c.ImGui_SliderInt("Points (x 64)", @ptrCast(&state.points_x_64), 100, 200000);
 
+        _ = c.ImGui_ColorEdit3("Background Color", @ptrCast(&state.background_color), c.ImGuiColorEditFlags_Float);
         _ = c.ImGui_ColorEdit3("Occlusion Color", @ptrCast(&state.occlusion_color), c.ImGuiColorEditFlags_Float);
         _ = c.ImGui_ColorEdit3("Sparse Color", @ptrCast(&state.sparse_color), c.ImGuiColorEditFlags_Float);
 

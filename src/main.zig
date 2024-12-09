@@ -517,7 +517,7 @@ const Renderer = struct {
 
         var vertices = std.ArrayList(Vertex).init(allocator);
         defer vertices.deinit();
-        try vertices.appendNTimes(.{ .pos = .{ 0, 0, 0, 1 } }, 64 * 50000);
+        try vertices.appendNTimes(.{ .pos = .{ 0, 0, 0, 1 } }, 64 * state.points_x_64);
 
         const vertex_buffer = blk: {
             const buffer = try device.createBuffer(&.{
@@ -1882,12 +1882,13 @@ const State = struct {
     lambda: f32 = 1.0,
     pause_t: bool = false,
     pause_generator: bool = false,
+    points_x_64: u32 = 50000,
 
     voxels: struct {
         // world space coords of center of the the voxel grid
         center: utils.Vec4 = .{},
         // world space half size of voxel grid
-        half_size: f32 = 1.5,
+        half_size: f32 = 3,
         // number of voxels along 1 edge (side ** 3 is the entire volume)
         side: u32 = 300,
     } = .{},
@@ -2487,7 +2488,15 @@ const GuiState = struct {
 
         const width = 75.0;
 
+        _ = c.ImGui_SliderFloat("Speed", &state.speed, 0.1, 10.0);
+        _ = c.ImGui_SliderFloat("Sensitivity", &state.sensitivity, 0.1, 10.0);
+
+        _ = c.ImGui_SliderInt("Points (x 64)", @ptrCast(&state.points_x_64), 100, 200000);
+
         _ = c.ImGui_SliderFloat("Lambda", &state.lambda, 0.1, 25.0);
+        _ = c.ImGui_Checkbox("Pause Time (pause_t)", &state.pause_t);
+        _ = c.ImGui_Checkbox("Pause Generator (pause_generator)", &state.pause_generator);
+
         c.ImGui_Text("Voxels Center:");
         c.ImGui_SetNextItemWidth(width);
         _ = c.ImGui_InputFloat("X##centerX", &state.voxels.center.x);
@@ -2499,16 +2508,7 @@ const GuiState = struct {
         _ = c.ImGui_InputFloat("Z##centerZ", &state.voxels.center.z);
 
         _ = c.ImGui_SliderFloat("Voxel Half Size", &state.voxels.half_size, 0.1, 10.0);
-
         _ = c.ImGui_SliderInt("Voxel Side", @ptrCast(&state.voxels.side), 1, 500);
-
-        _ = c.ImGui_Checkbox("Pause Time (pause_t)", &state.pause_t);
-
-        _ = c.ImGui_Checkbox("Pause Generator (pause_generator)", &state.pause_generator);
-
-        _ = c.ImGui_SliderFloat("Speed", &state.speed, 0.1, 10.0);
-
-        _ = c.ImGui_SliderFloat("Sensitivity", &state.sensitivity, 0.1, 10.0);
     }
 
     fn editVec3Constraints(self: *@This(), comptime label: [:0]const u8, constraints: *Vec3Constraints) void {

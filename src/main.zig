@@ -1993,10 +1993,10 @@ const State = struct {
             return extern struct {
                 transforms: [n]utils.Mat4x4 = std.mem.zeroes([n]utils.Mat4x4),
 
-                const Builder = struct {
+                pub const Builder = struct {
                     transforms: [n]Transforms,
 
-                    fn init() @This() {
+                    pub fn init() @This() {
                         var this = std.mem.zeroes(@This());
 
                         inline for (0..n) |i| {
@@ -2006,7 +2006,7 @@ const State = struct {
                         return this;
                     }
 
-                    fn random(rng: std.Random) @This() {
+                    pub fn random(rng: std.Random) @This() {
                         var this = std.mem.zeroes(@This());
 
                         inline for (0..n) |i| {
@@ -2016,7 +2016,7 @@ const State = struct {
                         return this;
                     }
 
-                    fn mix(self: *const @This(), other: *const @This(), t: f32) @This() {
+                    pub fn mix(self: *const @This(), other: *const @This(), t: f32) @This() {
                         var this = std.mem.zeroes(@This());
 
                         inline for (0..n) |i| {
@@ -2026,7 +2026,7 @@ const State = struct {
                         return this;
                     }
 
-                    fn build(self: *const @This()) TransformSet(n) {
+                    pub fn build(self: *const @This()) TransformSet(n) {
                         var this = std.mem.zeroes(TransformSet(n));
 
                         inline for (0..n) |i| {
@@ -2036,7 +2036,7 @@ const State = struct {
                         return this;
                     }
 
-                    const Transforms = struct {
+                    pub const Transforms = struct {
                         translate: utils.Vec4,
                         shear: struct {
                             x: utils.Vec4,
@@ -2046,7 +2046,7 @@ const State = struct {
                         scale: utils.Vec4,
                         rot: utils.Vec4,
 
-                        fn init() @This() {
+                        pub fn init() @This() {
                             return .{
                                 .translate = utils.Vec4{},
                                 .shear = .{
@@ -2059,7 +2059,7 @@ const State = struct {
                             };
                         }
 
-                        fn combine(self: *const @This()) utils.Mat4x4 {
+                        pub fn combine(self: *const @This()) utils.Mat4x4 {
                             var mat = utils.Mat4x4.identity();
                             mat = mat.mul_mat(utils.Mat4x4.scaling_mat(self.scale));
                             mat = mat.mul_mat(utils.Mat4x4.rot_mat_euler_angles(self.rot));
@@ -2096,14 +2096,17 @@ const State = struct {
                         }
                     };
 
-                    const Generator = struct {
+                    pub const Generator = struct {
                         scale: Vec3Constraints = Vec3Constraints.splat(.{ .min = 0.4, .max = 0.75 }),
                         rot: Vec3Constraints = Vec3Constraints.splat(.{
                             .min = -std.math.pi / 6.0,
                             .max = std.math.pi / 4.0,
                         }),
                         translate: Vec3Constraints = Vec3Constraints.splat(.{ .min = -1.0, .max = 1.0 }),
-                        shear: struct {
+                        shear: ShearConstraints = .{},
+
+                        pub const Constraints = utils.Rng.Constraints;
+                        pub const ShearConstraints = struct {
                             x: struct {
                                 y: Constraints = .{ .min = -0.2, .max = 0.2 },
                                 z: Constraints = .{ .min = -0.2, .max = 0.2 },
@@ -2116,10 +2119,8 @@ const State = struct {
                                 x: Constraints = .{ .min = -0.2, .max = 0.2 },
                                 y: Constraints = .{ .min = -0.2, .max = 0.2 },
                             } = .{},
-                        } = .{},
-
-                        const Constraints = utils.Rng.Constraints;
-                        const Vec3Constraints = struct {
+                        };
+                        pub const Vec3Constraints = struct {
                             x: Constraints = .{},
                             y: Constraints = .{},
                             z: Constraints = .{},

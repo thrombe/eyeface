@@ -12,6 +12,9 @@ layout(set = 0, binding = 0) uniform Ubo {
     mat4 world_to_screen;
     vec4 eye;
     Mouse mouse;
+    vec4 voxel_grid_center;
+    float voxel_grid_half_size;
+    int voxel_grid_side;
     uint frame;
     float time;
 } ubo;
@@ -26,21 +29,28 @@ layout(location = 0) in vec3 v_pos;
 
 layout(location = 0) out vec4 f_color;
 
+int to1D(ivec3 pos, int size) {
+    return pos.x + pos.y * size + pos.z * size * size;
+}
+
 void main() {
     float d = length(v_pos - ubo.eye.xyz);
     d = 1.0/d;
     d = d * d;
 
+    int side = ubo.voxel_grid_side;
     vec3 pos = v_pos;
-    pos += 1.5;
-    pos *= 100.0;
-    pos /= 3.0;
-    uint index = uint(pos.z) * 300 * 300 + uint(pos.y) * 300 + uint(pos.x);
+    pos -= ubo.voxel_grid_center.xyz;
+    pos /= ubo.voxel_grid_half_size;
+    pos *= float(side);
+    pos += float(side)/2.0;
+    int index = to1D(ivec3(pos), side);
 
     float o = 1.0 - occlusion[index];
 	o = pow(clamp(o * 1.0, 0.0, 1.0), 2.0);
 
-	vec3 col2 = vec3(0.7, 0.8, 0.6);
-	vec3 col1 = vec3(0.2, 0.0, 0.0);
+	vec3 col2 = vec3(0.9, 0.9, 0.9);
+	vec3 col1 = vec3(0.1, 0.0, 0.0);
+
 	f_color = vec4(mix(col1, col2, o), 1);
 }

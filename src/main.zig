@@ -475,6 +475,9 @@ const Renderer = struct {
         world_to_screen: utils.Mat4x4,
         eye: utils.Vec4,
         mouse: extern struct { x: i32, y: i32, left: u32, right: u32 },
+        voxel_grid_center: utils.Vec4,
+        voxel_grid_half_size: f32,
+        voxel_grid_side: u32,
         frame: u32,
         time: f32,
 
@@ -619,7 +622,7 @@ const Renderer = struct {
         }
 
         const voxels = blk: {
-            const vol_size = 300;
+            const vol_size = state.voxels.side;
             const voxel_buffer = try device.createBuffer(&.{
                 .size = @sizeOf(u32) * vol_size * vol_size * vol_size,
                 .usage = .{
@@ -1043,7 +1046,7 @@ const Renderer = struct {
             }{
                 .{
                     .path = "./src/clear_bufs.glsl",
-                    .group_x = 300 * 300 * 300 / 64,
+                    .group_x = state.voxels.side * state.voxels.side * state.voxels.side / 64,
                 },
                 .{
                     .path = "./src/iterate.glsl",
@@ -1051,7 +1054,7 @@ const Renderer = struct {
                 },
                 .{
                     .path = "./src/occlusion.glsl",
-                    .group_x = 300 * 300 * 300 / 64,
+                    .group_x = state.voxels.side * state.voxels.side * state.voxels.side / 64,
                 },
             };
 
@@ -1874,7 +1877,17 @@ const State = struct {
     transform_generator: Uniforms.TransformSet.Builder.Generator = .{},
     transforms: Uniforms.TransformSet.Builder,
     target_transforms: Uniforms.TransformSet.Builder,
+
     t: f32 = 0,
+
+    voxels: struct {
+        // world space coords of center of the the voxel grid
+        center: utils.Vec4 = .{},
+        // world space half size of voxel grid
+        half_size: f32 = 1.5,
+        // number of voxels along 1 edge (side ** 3 is the entire volume)
+        side: u32 = 300,
+    } = .{},
 
     rng: std.Random.Xoshiro256,
 
@@ -1983,6 +1996,9 @@ const State = struct {
                 .left = @intCast(@intFromBool(self.mouse.left)),
                 .right = @intCast(@intFromBool(self.mouse.right)),
             },
+            .voxel_grid_center = self.voxels.center,
+            .voxel_grid_half_size = self.voxels.half_size,
+            .voxel_grid_side = self.voxels.side,
             .frame = self.frame,
             .time = self.time,
         };
@@ -2444,6 +2460,9 @@ const GuiState = struct {
         if (c.ImGui_Begin("SIKE", null, c.ImGuiWindowFlags_None)) {
             c.ImGui_Text("Application average %.3f ms/frame (%.1f FPS)", delta, 1.0 / delta);
 
+            c.ImGui_Text("State");
+            self.editState(state);
+
             c.ImGui_Text("Scale");
             self.editVec3Constraints("Scale", &generator.scale);
 
@@ -2456,6 +2475,30 @@ const GuiState = struct {
             c.ImGui_Text("Shear");
             self.editShear("Shear", &generator.shear);
         }
+    }
+
+    fn editState(self: *@This(), state: *State) void {
+        _ = self;
+
+        const width = 75.0;
+
+        c.ImGui_Text("Voxels Center:");
+        c.ImGui_SetNextItemWidth(width);
+        _ = c.ImGui_InputFloat("X##centerX", &state.voxels.center.x);
+        c.ImGui_SameLine();
+        c.ImGui_SetNextItemWidth(width);
+        _ = c.ImGui_InputFloat("Y##centerY", &state.voxels.center.y);
+        c.ImGui_SameLine();
+        c.ImGui_SetNextItemWidth(width);
+        _ = c.ImGui_InputFloat("Z##centerZ", &state.voxels.center.z);
+
+        _ = c.ImGui_SliderFloat("Voxel Half Size", &state.voxels.half_size, 0.1, 10.0);
+
+        _ = c.ImGui_SliderInt("Voxel Side", @ptrCast(&state.voxels.side), 1, 500);
+
+        _ = c.ImGui_SliderFloat("Speed", &state.speed, 0.1, 10.0);
+
+        _ = c.ImGui_SliderFloat("Sensitivity", &state.sensitivity, 0.1, 10.0);
     }
 
     fn editVec3Constraints(self: *@This(), comptime label: [:0]const u8, constraints: *Vec3Constraints) void {

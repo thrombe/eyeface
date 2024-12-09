@@ -12,6 +12,9 @@ layout(set = 0, binding = 0) uniform Ubo {
     mat4 world_to_screen;
     vec4 eye;
     Mouse mouse;
+    vec4 voxel_grid_center;
+    float voxel_grid_half_size;
+    int voxel_grid_side;
     uint frame;
     float time;
 } ubo;

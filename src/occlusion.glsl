@@ -12,6 +12,9 @@ layout(set = 0, binding = 0) uniform Ubo {
     mat4 world_to_screen;
     vec4 eye;
     Mouse mouse;
+    vec4 voxel_grid_center;
+    float voxel_grid_half_size;
+    int voxel_grid_side;
     uint frame;
     float time;
 } ubo;
@@ -39,19 +42,28 @@ uint rand_xorshift(uint state) {
     return state;
 }
 
-uint to1D(ivec3 pos, int size) {
+int to1D(ivec3 pos, int size) {
     return pos.x + pos.y * size + pos.z * size * size;
+}
+ivec3 to3D(int id, int side) {
+    ivec3 pos = ivec3(id % side, (id / side)%side, (id / (side * side))%side);
+    return pos;
+}
+
+float voxelGridSample(ivec3 pos) {
+    return float(voxels[to1D(pos, ubo.voxel_grid_side)] > 0);
 }
 
 void main() {
     int id = int(gl_LocalInvocationID.x) + int(gl_LocalInvocationID.y) * int(gl_WorkGroupSize.x) + int(gl_WorkGroupID.x) * 64;
     // uint id = gl_GlobalInvocationID.x;
     // vec4 pos = vertices[id].pos;
-    ivec3 pos = ivec3(id % 300, (id / 300)%300, (id / (300 * 300))%300);
+    int side = ubo.voxel_grid_side;
+    ivec3 pos = to3D(id, side);
     for (int z = -1; z < 2; z += 1) {
         for (int y = -1; y < 2; y += 1) {
             for (int x = -1; x < 2; x += 1) {
-                occlusion[id] += float(voxels[to1D(pos + ivec3(x, y, z), 300)] > 0);
+                occlusion[id] += voxelGridSample(pos + ivec3(x, y, z));
             }
         }
     }

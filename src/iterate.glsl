@@ -12,6 +12,9 @@ layout(set = 0, binding = 0) uniform Ubo {
     mat4 world_to_screen;
     vec4 eye;
     Mouse mouse;
+    vec4 voxel_grid_center;
+    float voxel_grid_half_size;
+    int voxel_grid_side;
     uint frame;
     float time;
 } ubo;
@@ -40,6 +43,10 @@ uint rand_xorshift(uint state) {
     return state;
 }
 
+int to1D(ivec3 pos, int size) {
+    return pos.x + pos.y * size + pos.z * size * size;
+}
+
 void main() {
     uint id = gl_LocalInvocationID.x + gl_LocalInvocationID.y * gl_WorkGroupSize.x + gl_WorkGroupID.x * 64;
     // uint id = gl_GlobalInvocationID.x;
@@ -50,9 +57,10 @@ void main() {
 
     vertices[id].pos = pos;
 
-    pos += 1.5;
-    pos *= 100.0;
-    pos /= 3.0;
-    uint index = uint(pos.z) * 300 * 300 + uint(pos.y) * 300 + uint(pos.x);
-    voxels[index] += 1;
+    int side = ubo.voxel_grid_side;
+    pos.xyz -= ubo.voxel_grid_center.xyz;
+    pos /= ubo.voxel_grid_half_size;
+    pos *= float(side);
+    pos += float(side)/2.0;
+    voxels[to1D(ivec3(pos), side)] += 1;
 }

@@ -66,7 +66,7 @@ ivec3 to3D(int id, int side) {
         float occlusion[];
     };
     layout(set = 0, binding = 4) buffer ScreenBuffer {
-        vec2 screen[];
+        vec4 screen[];
     };
     layout(set = 0, binding = 5) buffer DepthBuffer {
         float depth[];
@@ -81,7 +81,7 @@ ivec3 to3D(int id, int side) {
         float occlusion[];
     };
     layout(set = 0, binding = 3) readonly buffer ScreenBuffer {
-        vec2 screen[];
+        vec4 screen[];
     };
     layout(set = 0, binding = 4) readonly buffer DepthBuffer {
         float depth[];
@@ -115,7 +115,7 @@ float voxelGridSample(ivec3 pos) {
         voxels[id] = 0;
         occlusion[id] = 0.0;
         depth[id] = 1.1;
-        screen[id] = vec2(0.0);
+        screen[id] = vec4(0.0);
     }
 #endif // EYEFACE_CLEAR_BUFS
 
@@ -212,34 +212,11 @@ float voxelGridSample(ivec3 pos) {
             grid_pos *= float(side);
             grid_pos += float(side)/2.0;
             if (inGrid(ivec3(grid_pos))) {
-                int index = to1D(ivec3(grid_pos), side);
-
-                // trilinear occlusion sample :/
-				ivec3 vi = ivec3(grid_pos);
-				float weight1 = 0.0f;
-				float weight2 = 0.0f;
-				float weight3 = 0.0f;
-				float value = 0.0f;
-				for (int i = 0; i < 2; ++i) {
-					weight1 = 1 - min(abs(grid_pos.x - (vi.x + i)), side);
-					for (int j = 0; j < 2; ++j) {
-						weight2 = 1 - min(abs(grid_pos.y - (vi.y + j)), side);
-						for (int k = 0; k < 2; ++k) {
-							weight3 = 1 - min(abs(grid_pos.z - (vi.z + k)), side);
-							value += weight1 * weight2 * weight3 * occlusion[to1D(vi + ivec3(i, j, k), side)];
-						}
-					}
-				}
-
-                screen[si].x = value;
-                screen[si].y = 1.0;
+                screen[si].xyz = grid_pos;
+                screen[si].w = 1.0;
             } else {
-                float dist = length(pos.xyz - ubo.eye.xyz);
-                dist = 1.0/dist;
-                dist = dist * dist;
-
-                screen[si].x = dist;
-                screen[si].y = 0.0;
+                screen[si].xyz = pos.xyz;
+                screen[si].w = 0.0;
             }
         }
 
@@ -271,10 +248,36 @@ float voxelGridSample(ivec3 pos) {
         ivec2 pos = ivec2(gl_FragCoord.xy);
         int index = to1D(pos, int(ubo.width));
 
-        if (screen[index].y > 0.0) {
-            f_color = vec4(mix(ubo.occlusion_color.xyz, ubo.sparse_color.xyz, screen[index].x), 1);
+        if (screen[index].w > 0.0) {
+            vec3 pos = screen[index].xyz;
+            int side = ubo.voxel_grid_side;
+            int index = to1D(ivec3(pos), side);
+
+            // trilinear occlusion sample :/
+			ivec3 vi = ivec3(pos);
+			float weight1 = 0.0f;
+			float weight2 = 0.0f;
+			float weight3 = 0.0f;
+			float value = 0.0f;
+			for (int i = 0; i < 2; ++i) {
+				weight1 = 1 - min(abs(pos.x - (vi.x + i)), side);
+				for (int j = 0; j < 2; ++j) {
+					weight2 = 1 - min(abs(pos.y - (vi.y + j)), side);
+					for (int k = 0; k < 2; ++k) {
+						weight3 = 1 - min(abs(pos.z - (vi.z + k)), side);
+						value += weight1 * weight2 * weight3 * occlusion[to1D(vi + ivec3(i, j, k), side)];
+					}
+				}
+			}
+
+            f_color = vec4(mix(ubo.occlusion_color.xyz, ubo.sparse_color.xyz, value), 1.0);
         } else {
-            f_color = vec4(vec3(screen[index].x), 1);
+            vec3 pos = screen[index].xyz;
+            float dist = length(pos.xyz - ubo.eye.xyz);
+            dist = 1.0/dist;
+            dist = dist * dist;
+
+            f_color = vec4(vec3(dist), 1.0);
         }
     }
 #endif // EYEFACE_FRAG

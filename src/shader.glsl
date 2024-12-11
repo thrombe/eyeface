@@ -285,5 +285,13 @@ float voxelGridSample(ivec3 pos) {
         } else {
             f_color = ubo.background_color;
         }
+
+        float gamma = 2.1;
+        f_color = vec4(
+            pow(f_color.x, gamma),
+            pow(f_color.y, gamma),
+            pow(f_color.z, gamma),
+            1.0
+        );
     }
 #endif // EYEFACE_FRAG

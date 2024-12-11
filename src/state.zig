@@ -32,8 +32,9 @@ pub const AppState = struct {
     pause_t: bool = false,
     pause_generator: bool = false,
     points_x_64: u32 = 50000,
-    iterations: u32 = 25,
-    voxelization_iterations: u32 = 1,
+    iterations: u32 = 20,
+    voxelization_points_x_64: u32 = 50000,
+    voxelization_iterations: u32 = 4,
 
     background_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#282828ff"),
     occlusion_color: Vec4 = .{ .x = 0.1, .y = 0.0, .z = 0.0 },
@@ -167,7 +168,9 @@ pub const AppState = struct {
             .background_color = self.background_color,
             .occlusion_multiplier = self.occlusion_multiplier,
             .occlusion_attenuation = self.occlusion_attenuation,
+            .points = self.points_x_64 * 64,
             .iterations = self.iterations,
+            .voxelization_points = self.voxelization_points_x_64 * 64,
             .voxelization_iterations = self.voxelization_iterations,
             .frame = self.frame,
             .time = self.time,
@@ -215,7 +218,9 @@ pub const GuiState = struct {
         _ = c.ImGui_SliderFloat("Speed", &state.speed, 0.1, 10.0);
         _ = c.ImGui_SliderFloat("Sensitivity", &state.sensitivity, 0.1, 10.0);
 
-        _ = c.ImGui_SliderInt("Points (x 64)", @ptrCast(&state.points_x_64), 100, 200000);
+        _ = c.ImGui_SliderInt("points (x 64)", @ptrCast(&state.points_x_64), 100, 1000000);
+        state.voxelization_points_x_64 = @min(state.voxelization_points_x_64, state.points_x_64);
+        _ = c.ImGui_SliderInt("voxelization points (x 64)", @ptrCast(&state.voxelization_points_x_64), 100, @intCast(state.points_x_64));
         _ = c.ImGui_SliderInt("iterations", @ptrCast(&state.iterations), 0, 100);
         _ = c.ImGui_SliderInt("voxelization iterations", @ptrCast(&state.voxelization_iterations), 0, 20);
 

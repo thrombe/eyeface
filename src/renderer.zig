@@ -133,13 +133,9 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     }, null);
     errdefer device.destroyCommandPool(pool, null);
 
-    var vertices = std.ArrayList(Vertex).init(allocator);
-    defer vertices.deinit();
-    try vertices.appendNTimes(.{ .pos = .{ 0, 0, 0, 1 } }, 64 * app_state.points_x_64);
-
     const vertex_buffer = blk: {
         const buffer = try device.createBuffer(&.{
-            .size = @sizeOf(Vertex) * vertices.items.len,
+            .size = @sizeOf(Vertex) * app_state.points_x_64 * 64,
             .usage = .{
                 .transfer_dst_bit = true,
                 .vertex_buffer_bit = true,
@@ -154,7 +150,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         try device.bindBufferMemory(buffer, memory, 0);
 
         const staging_buffer = try device.createBuffer(&.{
-            .size = @sizeOf(Vertex) * vertices.items.len,
+            .size = @sizeOf(Vertex) * app_state.points_x_64 * 64,
             .usage = .{ .transfer_src_bit = true },
             .sharing_mode = .exclusive,
         }, null);
@@ -169,10 +165,10 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             defer device.unmapMemory(staging_memory);
 
             const gpu_vertices: [*]Vertex = @ptrCast(@alignCast(data));
-            @memcpy(gpu_vertices, vertices.items);
+            @memset(gpu_vertices[0 .. app_state.points_x_64 * 64], .{ .pos = .{ 0, 0, 0, 1 } });
         }
 
-        try copyBuffer(ctx, device, pool, buffer, staging_buffer, @sizeOf(Vertex) * vertices.items.len);
+        try copyBuffer(ctx, device, pool, buffer, staging_buffer, @sizeOf(Vertex) * app_state.points_x_64 * 64);
 
         break :blk .{ .buffer = buffer, .memory = memory };
     };
@@ -815,8 +811,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             .{
                 .path = "./src/shader.glsl",
                 .define = "EYEFACE_VOXELIZE",
-                // .group_x = 10000 * 64 / 64,
-                .group_x = @intCast(vertices.items.len / 64),
+                .group_x = app_state.points_x_64,
             },
             .{
                 .path = "./src/shader.glsl",
@@ -826,7 +821,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             .{
                 .path = "./src/shader.glsl",
                 .define = "EYEFACE_ITERATE",
-                .group_x = @intCast(vertices.items.len / 64),
+                .group_x = app_state.points_x_64,
             },
         };
 

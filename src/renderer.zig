@@ -509,9 +509,9 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     const vert_spv = blk: {
         compiler.stage = .vertex;
         const vert: utils.Glslc.Compiler.Code = .{ .path = .{
-            .main = "./src/vert.glsl",
+            .main = "./src/shader.glsl",
             .include = &[_][]const u8{},
-            .definitions = &[_][]const u8{},
+            .definitions = &[_][]const u8{ "EYEFACE_RENDER", "EYEFACE_VERT" },
         } };
         // _ = compiler.dump_assembly(allocator, &vert);
         const res = try compiler.compile(
@@ -535,9 +535,9 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     const frag_spv = blk: {
         compiler.stage = .fragment;
         const frag: utils.Glslc.Compiler.Code = .{ .path = .{
-            .main = "./src/frag.glsl",
+            .main = "./src/shader.glsl",
             .include = &[_][]const u8{},
-            .definitions = &[_][]const u8{},
+            .definitions = &[_][]const u8{ "EYEFACE_RENDER", "EYEFACE_FRAG" },
         } };
         // _ = compiler.dump_assembly(allocator, &frag);
         const res = try compiler.compile(
@@ -650,21 +650,25 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     const compute_pipelines = blk: {
         var pipelines = [_]struct {
             path: [:0]const u8,
+            define: []const u8,
             group_x: u32 = 1,
             group_y: u32 = 1,
             group_z: u32 = 1,
             pipeline: vk.Pipeline = undefined,
         }{
             .{
-                .path = "./src/clear_bufs.glsl",
+                .path = "./src/shader.glsl",
+                .define = "EYEFACE_CLEAR_BUFS",
                 .group_x = app_state.voxels.side * app_state.voxels.side * app_state.voxels.side / 64,
             },
             .{
-                .path = "./src/iterate.glsl",
+                .path = "./src/shader.glsl",
+                .define = "EYEFACE_ITERATE",
                 .group_x = @intCast(vertices.items.len / 64),
             },
             .{
-                .path = "./src/occlusion.glsl",
+                .path = "./src/shader.glsl",
+                .define = "EYEFACE_OCCLUSION",
                 .group_x = app_state.voxels.side * app_state.voxels.side * app_state.voxels.side / 64,
             },
         };
@@ -675,7 +679,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
                 const frag: utils.Glslc.Compiler.Code = .{ .path = .{
                     .main = p.path,
                     .include = &[_][]const u8{},
-                    .definitions = &[_][]const u8{},
+                    .definitions = &[_][]const u8{ "EYEFACE_COMPUTE", p.define },
                 } };
                 // _ = compiler.dump_assembly(allocator, &frag);
                 const res = try compiler.compile(

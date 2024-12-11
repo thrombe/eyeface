@@ -32,6 +32,8 @@ pub const AppState = struct {
     pause_t: bool = false,
     pause_generator: bool = false,
     points_x_64: u32 = 50000,
+    iterations: u32 = 25,
+    voxelization_iterations: u32 = 1,
 
     background_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#282828ff"),
     occlusion_color: Vec4 = .{ .x = 0.1, .y = 0.0, .z = 0.0 },
@@ -164,8 +166,12 @@ pub const AppState = struct {
             .sparse_color = self.sparse_color,
             .occlusion_multiplier = self.occlusion_multiplier,
             .occlusion_attenuation = self.occlusion_attenuation,
+            .iterations = self.iterations,
+            .voxelization_iterations = self.voxelization_iterations,
             .frame = self.frame,
             .time = self.time,
+            .width = window.extent.width,
+            .height = window.extent.height,
         };
     }
 };
@@ -209,6 +215,8 @@ pub const GuiState = struct {
         _ = c.ImGui_SliderFloat("Sensitivity", &state.sensitivity, 0.1, 10.0);
 
         _ = c.ImGui_SliderInt("Points (x 64)", @ptrCast(&state.points_x_64), 100, 200000);
+        _ = c.ImGui_SliderInt("iterations", @ptrCast(&state.iterations), 0, 100);
+        _ = c.ImGui_SliderInt("voxelization iterations", @ptrCast(&state.voxelization_iterations), 0, 20);
 
         _ = c.ImGui_ColorEdit3("Background Color", @ptrCast(&state.background_color), c.ImGuiColorEditFlags_Float);
         _ = c.ImGui_ColorEdit3("Occlusion Color", @ptrCast(&state.occlusion_color), c.ImGuiColorEditFlags_Float);

@@ -40,6 +40,10 @@ voxel_buffer: vk.Buffer,
 voxel_buffer_memory: vk.DeviceMemory,
 occlusion_buffer: vk.Buffer,
 occlusion_buffer_memory: vk.DeviceMemory,
+screen_buffer: vk.Buffer,
+screen_buffer_memory: vk.DeviceMemory,
+screen_depth_buffer: vk.Buffer,
+screen_depth_buffer_memory: vk.DeviceMemory,
 descriptor_pool: vk.DescriptorPool,
 frag_descriptor_set_layout: vk.DescriptorSetLayout,
 frag_descriptor_set: vk.DescriptorSet,
@@ -84,13 +88,15 @@ pub const Uniforms = extern struct {
     sparse_color: Vec4,
     occlusion_multiplier: f32,
     occlusion_attenuation: f32,
-    _pad1: f32 = 0,
-    _pad2: f32 = 0,
+    iterations: u32,
+    voxelization_iterations: u32,
     voxel_grid_center: Vec4,
     voxel_grid_half_size: f32,
     voxel_grid_side: u32,
     frame: u32,
     time: f32,
+    width: u32,
+    height: u32,
 
     pub const TransformSet = transform.TransformSet(5);
 };
@@ -278,6 +284,50 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         device.freeMemory(voxels.occlusion_buffer_memory, null);
     }
 
+    const screen = blk: {
+        const screen_buffer = try device.createBuffer(&.{
+            .size = @sizeOf(f32) * 2 * engine.window.extent.width * engine.window.extent.height,
+            .usage = .{
+                .storage_buffer_bit = true,
+            },
+            .sharing_mode = .exclusive,
+        }, null);
+        errdefer device.destroyBuffer(screen_buffer, null);
+
+        const mem_reqs = device.getBufferMemoryRequirements(screen_buffer);
+        const screen_memory = try ctx.allocate(mem_reqs, .{ .device_local_bit = true });
+        errdefer device.freeMemory(screen_memory, null);
+        try device.bindBufferMemory(screen_buffer, screen_memory, 0);
+
+        break :blk .{ .buffer = screen_buffer, .memory = screen_memory };
+    };
+    errdefer {
+        device.destroyBuffer(screen.buffer, null);
+        device.freeMemory(screen.memory, null);
+    }
+
+    const screen_depth = blk: {
+        const screen_buffer = try device.createBuffer(&.{
+            .size = @sizeOf(f32) * engine.window.extent.width * engine.window.extent.height,
+            .usage = .{
+                .storage_buffer_bit = true,
+            },
+            .sharing_mode = .exclusive,
+        }, null);
+        errdefer device.destroyBuffer(screen_buffer, null);
+
+        const mem_reqs = device.getBufferMemoryRequirements(screen_buffer);
+        const screen_memory = try ctx.allocate(mem_reqs, .{ .device_local_bit = true });
+        errdefer device.freeMemory(screen_memory, null);
+        try device.bindBufferMemory(screen_buffer, screen_memory, 0);
+
+        break :blk .{ .buffer = screen_buffer, .memory = screen_memory };
+    };
+    errdefer {
+        device.destroyBuffer(screen_depth.buffer, null);
+        device.freeMemory(screen_depth.memory, null);
+    }
+
     const frag_bindings = [_]vk.DescriptorSetLayoutBinding{
         .{
             .binding = 0,
@@ -301,6 +351,26 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         },
         .{
             .binding = 2,
+            .descriptor_type = .storage_buffer,
+            .descriptor_count = 1,
+            .stage_flags = .{
+                .vertex_bit = true,
+                .fragment_bit = true,
+                .compute_bit = true,
+            },
+        },
+        .{
+            .binding = 3,
+            .descriptor_type = .storage_buffer,
+            .descriptor_count = 1,
+            .stage_flags = .{
+                .vertex_bit = true,
+                .fragment_bit = true,
+                .compute_bit = true,
+            },
+        },
+        .{
+            .binding = 4,
             .descriptor_type = .storage_buffer,
             .descriptor_count = 1,
             .stage_flags = .{
@@ -358,6 +428,26 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
                 .compute_bit = true,
             },
         },
+        .{
+            .binding = 4,
+            .descriptor_type = .storage_buffer,
+            .descriptor_count = 1,
+            .stage_flags = .{
+                .vertex_bit = true,
+                .fragment_bit = true,
+                .compute_bit = true,
+            },
+        },
+        .{
+            .binding = 5,
+            .descriptor_type = .storage_buffer,
+            .descriptor_count = 1,
+            .stage_flags = .{
+                .vertex_bit = true,
+                .fragment_bit = true,
+                .compute_bit = true,
+            },
+        },
     };
     const compute_desc_set_layout = try device.createDescriptorSetLayout(&.{
         .flags = .{},
@@ -372,7 +462,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         },
         .{
             .type = .storage_buffer,
-            .descriptor_count = 3,
+            .descriptor_count = 5,
         },
     };
     const desc_pool = try device.createDescriptorPool(&.{
@@ -439,6 +529,36 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             .p_image_info = undefined,
             .p_texel_buffer_view = undefined,
         },
+        .{
+            .dst_set = frag_desc_set,
+            .dst_binding = 3,
+            .dst_array_element = 0,
+            .descriptor_count = 1,
+            .descriptor_type = .storage_buffer,
+            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                .buffer = screen.buffer,
+                .offset = 0,
+                .range = vk.WHOLE_SIZE,
+            }},
+            // OOF: ??
+            .p_image_info = undefined,
+            .p_texel_buffer_view = undefined,
+        },
+        .{
+            .dst_set = frag_desc_set,
+            .dst_binding = 4,
+            .dst_array_element = 0,
+            .descriptor_count = 1,
+            .descriptor_type = .storage_buffer,
+            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                .buffer = screen_depth.buffer,
+                .offset = 0,
+                .range = vk.WHOLE_SIZE,
+            }},
+            // OOF: ??
+            .p_image_info = undefined,
+            .p_texel_buffer_view = undefined,
+        },
     };
     device.updateDescriptorSets(frag_desc_set_updates.len, &frag_desc_set_updates, 0, null);
     const compute_desc_set_updates = [_]vk.WriteDescriptorSet{
@@ -495,6 +615,36 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             .descriptor_type = .storage_buffer,
             .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
                 .buffer = voxels.occlusion_buffer,
+                .offset = 0,
+                .range = vk.WHOLE_SIZE,
+            }},
+            // OOF: ??
+            .p_image_info = undefined,
+            .p_texel_buffer_view = undefined,
+        },
+        .{
+            .dst_set = compute_desc_set,
+            .dst_binding = 4,
+            .dst_array_element = 0,
+            .descriptor_count = 1,
+            .descriptor_type = .storage_buffer,
+            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                .buffer = screen.buffer,
+                .offset = 0,
+                .range = vk.WHOLE_SIZE,
+            }},
+            // OOF: ??
+            .p_image_info = undefined,
+            .p_texel_buffer_view = undefined,
+        },
+        .{
+            .dst_set = compute_desc_set,
+            .dst_binding = 5,
+            .dst_array_element = 0,
+            .descriptor_count = 1,
+            .descriptor_type = .storage_buffer,
+            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                .buffer = screen_depth.buffer,
                 .offset = 0,
                 .range = vk.WHOLE_SIZE,
             }},
@@ -663,13 +813,19 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             },
             .{
                 .path = "./src/shader.glsl",
-                .define = "EYEFACE_ITERATE",
+                .define = "EYEFACE_VOXELIZE",
+                // .group_x = 10000 * 64 / 64,
                 .group_x = @intCast(vertices.items.len / 64),
             },
             .{
                 .path = "./src/shader.glsl",
                 .define = "EYEFACE_OCCLUSION",
                 .group_x = app_state.voxels.side * app_state.voxels.side * app_state.voxels.side / 64,
+            },
+            .{
+                .path = "./src/shader.glsl",
+                .define = "EYEFACE_ITERATE",
+                .group_x = @intCast(vertices.items.len / 64),
             },
         };
 
@@ -766,10 +922,10 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         };
 
         const pvisci = vk.PipelineVertexInputStateCreateInfo{
-            .vertex_binding_description_count = 1,
-            .p_vertex_binding_descriptions = @ptrCast(&Vertex.binding_description),
-            .vertex_attribute_description_count = Vertex.attribute_description.len,
-            .p_vertex_attribute_descriptions = &Vertex.attribute_description,
+            // .vertex_binding_description_count = 0,
+            // .p_vertex_binding_descriptions = @ptrCast(&Vertex.binding_description),
+            // .vertex_attribute_description_count = Vertex.attribute_description.len,
+            // .p_vertex_attribute_descriptions = &Vertex.attribute_description,
         };
 
         const piasci = vk.PipelineInputAssemblyStateCreateInfo{
@@ -787,7 +943,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         const prsci = vk.PipelineRasterizationStateCreateInfo{
             .depth_clamp_enable = vk.FALSE,
             .rasterizer_discard_enable = vk.FALSE,
-            .polygon_mode = .point,
+            .polygon_mode = .fill,
             .cull_mode = .{ .back_bit = false },
             .front_face = .clockwise,
             .depth_bias_enable = vk.FALSE,
@@ -1024,9 +1180,8 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             }, .@"inline");
 
             device.cmdBindPipeline(cmdbuf, .graphics, pipeline);
-            device.cmdBindVertexBuffers(cmdbuf, 0, 1, @ptrCast(&vertex_buffer.buffer), &[_]vk.DeviceSize{0});
             device.cmdBindDescriptorSets(cmdbuf, .graphics, pipeline_layout, 0, 1, @ptrCast(&frag_desc_set), 0, null);
-            device.cmdDraw(cmdbuf, @intCast(vertices.items.len), uniforms.transforms.transforms.len, 0, 0);
+            device.cmdDraw(cmdbuf, 6, 1, 0, 0);
 
             device.cmdEndRenderPass(cmdbuf);
             try device.endCommandBuffer(cmdbuf);
@@ -1053,6 +1208,10 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         .voxel_buffer_memory = voxels.voxel_buffer_memory,
         .occlusion_buffer = voxels.occlusion_buffer,
         .occlusion_buffer_memory = voxels.occlusion_buffer_memory,
+        .screen_buffer = screen.buffer,
+        .screen_buffer_memory = screen.memory,
+        .screen_depth_buffer = screen_depth.buffer,
+        .screen_depth_buffer_memory = screen_depth.memory,
         .descriptor_pool = desc_pool,
         .frag_descriptor_set_layout = frag_desc_set_layout,
         .frag_descriptor_set = frag_desc_set,
@@ -1098,6 +1257,14 @@ pub fn deinit(self: *@This(), device: *Device) void {
         device.freeMemory(self.voxel_buffer_memory, null);
         device.destroyBuffer(self.occlusion_buffer, null);
         device.freeMemory(self.occlusion_buffer_memory, null);
+    }
+    defer {
+        device.destroyBuffer(self.screen_buffer, null);
+        device.freeMemory(self.screen_buffer_memory, null);
+    }
+    defer {
+        device.destroyBuffer(self.screen_depth_buffer, null);
+        device.freeMemory(self.screen_depth_buffer_memory, null);
     }
     defer device.destroyDescriptorSetLayout(self.frag_descriptor_set_layout, null);
     defer device.destroyDescriptorSetLayout(self.compute_descriptor_set_layout, null);

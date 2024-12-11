@@ -281,7 +281,7 @@ float voxelGridSample(ivec3 pos) {
             dist = 1.0/dist;
             dist = dist * dist;
 
-            f_color = vec4(vec3(dist), 1.0);
+            f_color = vec4(mix(ubo.occlusion_color.xyz, ubo.sparse_color.xyz, dist), 1.0);
         } else {
             f_color = ubo.background_color;
         }

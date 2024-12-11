@@ -37,9 +37,9 @@ pub const AppState = struct {
     voxelization_iterations: u32 = 4,
 
     background_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#282828ff"),
-    occlusion_color: Vec4 = .{ .x = 0.1, .y = 0.0, .z = 0.0 },
-    sparse_color: Vec4 = .{ .x = 0.9, .y = 0.9, .z = 0.9 },
-    occlusion_multiplier: f32 = 1.0,
+    occlusion_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#401a1aff"),
+    sparse_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#e0e7cdff"),
+    occlusion_multiplier: f32 = 1.25,
     occlusion_attenuation: f32 = 2.0,
 
     voxels: struct {

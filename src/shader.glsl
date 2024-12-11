@@ -14,6 +14,7 @@ struct Uniforms {
     Mouse mouse;
     vec4 occlusion_color;
     vec4 sparse_color;
+    vec4 background_color;
     float occlusion_multiplier;
     float occlusion_attenuation;
     int iterations;
@@ -213,10 +214,10 @@ float voxelGridSample(ivec3 pos) {
             grid_pos += float(side)/2.0;
             if (inGrid(ivec3(grid_pos))) {
                 screen[si].xyz = grid_pos;
-                screen[si].w = 1.0;
+                screen[si].w = 2.0;
             } else {
                 screen[si].xyz = pos.xyz;
-                screen[si].w = 0.0;
+                screen[si].w = 1.0;
             }
         }
 
@@ -248,7 +249,8 @@ float voxelGridSample(ivec3 pos) {
         ivec2 pos = ivec2(gl_FragCoord.xy);
         int index = to1D(pos, int(ubo.width));
 
-        if (screen[index].w > 0.0) {
+        float type = screen[index].w;
+        if (type > 1.5) {
             vec3 pos = screen[index].xyz;
             int side = ubo.voxel_grid_side;
             int index = to1D(ivec3(pos), side);
@@ -271,13 +273,15 @@ float voxelGridSample(ivec3 pos) {
 			}
 
             f_color = vec4(mix(ubo.occlusion_color.xyz, ubo.sparse_color.xyz, value), 1.0);
-        } else {
+        } else if (type > 0.5) {
             vec3 pos = screen[index].xyz;
-            float dist = length(pos.xyz - ubo.eye.xyz);
+            float dist = length(pos - ubo.eye.xyz);
             dist = 1.0/dist;
             dist = dist * dist;
 
             f_color = vec4(vec3(dist), 1.0);
+        } else {
+            f_color = ubo.background_color;
         }
     }
 #endif // EYEFACE_FRAG

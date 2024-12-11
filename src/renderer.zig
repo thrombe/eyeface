@@ -86,6 +86,7 @@ pub const Uniforms = extern struct {
     mouse: extern struct { x: i32, y: i32, left: u32, right: u32 },
     occlusion_color: Vec4,
     sparse_color: Vec4,
+    background_color: Vec4,
     occlusion_multiplier: f32,
     occlusion_attenuation: f32,
     iterations: u32,

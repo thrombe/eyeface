@@ -164,6 +164,7 @@ pub const AppState = struct {
             .voxel_grid_side = self.voxels.side,
             .occlusion_color = self.occlusion_color,
             .sparse_color = self.sparse_color,
+            .background_color = self.background_color,
             .occlusion_multiplier = self.occlusion_multiplier,
             .occlusion_attenuation = self.occlusion_attenuation,
             .iterations = self.iterations,

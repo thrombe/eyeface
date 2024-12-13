@@ -184,13 +184,15 @@ float voxelGridSample(ivec3 pos) {
             pos = ubo.transforms[seed % 5] * pos;
 
             vec4 screen_pos = ubo.world_to_screen * pos;
+
+            // behind the camera
+            if (screen_pos.z < 0.0) {
+                continue;
+            }
             screen_pos /= screen_pos.w;
 
             // outside the screen
             if (any(greaterThan(abs(screen_pos.xy) - vec2(1.0), vec2(0.0)))) {
-                continue;
-            }
-            if (screen_pos.z < 0.0) {
                 continue;
             }
 

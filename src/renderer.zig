@@ -44,6 +44,8 @@ screen_buffer: vk.Buffer,
 screen_buffer_memory: vk.DeviceMemory,
 screen_depth_buffer: vk.Buffer,
 screen_depth_buffer_memory: vk.DeviceMemory,
+reduction_buffer: vk.Buffer,
+reduction_buffer_memory: vk.DeviceMemory,
 descriptor_pool: vk.DescriptorPool,
 frag_descriptor_set_layout: vk.DescriptorSetLayout,
 frag_descriptor_set: vk.DescriptorSet,
@@ -88,7 +90,6 @@ pub const Uniforms = extern struct {
     sparse_color: Vec4,
     background_color: Vec4,
     voxel_grid_center: Vec4,
-    voxel_grid_half_size: f32,
     voxel_grid_side: u32,
     occlusion_multiplier: f32,
     occlusion_attenuation: f32,
@@ -96,8 +97,11 @@ pub const Uniforms = extern struct {
     iterations: u32,
     voxelization_points: u32,
     voxelization_iterations: u32,
+    reduction_points: u32,
     frame: u32,
     time: f32,
+    deltatime: f32,
+    lambda: f32,
     width: u32,
     height: u32,
 
@@ -327,6 +331,28 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         device.freeMemory(screen_depth.memory, null);
     }
 
+    const reduction = blk: {
+        const buffer = try device.createBuffer(&.{
+            .size = @sizeOf(f32) * 4 * 2 + @sizeOf(f32) * 3 * app_state.points_x_64 * 64,
+            .usage = .{
+                .storage_buffer_bit = true,
+            },
+            .sharing_mode = .exclusive,
+        }, null);
+        errdefer device.destroyBuffer(buffer, null);
+
+        const mem_reqs = device.getBufferMemoryRequirements(buffer);
+        const memory = try ctx.allocate(mem_reqs, .{ .device_local_bit = true });
+        errdefer device.freeMemory(memory, null);
+        try device.bindBufferMemory(buffer, memory, 0);
+
+        break :blk .{ .buffer = buffer, .memory = memory };
+    };
+    errdefer {
+        device.destroyBuffer(reduction.buffer, null);
+        device.freeMemory(reduction.memory, null);
+    }
+
     const frag_bindings = [_]vk.DescriptorSetLayoutBinding{
         .{
             .binding = 0,
@@ -370,6 +396,16 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         },
         .{
             .binding = 4,
+            .descriptor_type = .storage_buffer,
+            .descriptor_count = 1,
+            .stage_flags = .{
+                .vertex_bit = true,
+                .fragment_bit = true,
+                .compute_bit = true,
+            },
+        },
+        .{
+            .binding = 5,
             .descriptor_type = .storage_buffer,
             .descriptor_count = 1,
             .stage_flags = .{
@@ -447,6 +483,16 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
                 .compute_bit = true,
             },
         },
+        .{
+            .binding = 6,
+            .descriptor_type = .storage_buffer,
+            .descriptor_count = 1,
+            .stage_flags = .{
+                .vertex_bit = true,
+                .fragment_bit = true,
+                .compute_bit = true,
+            },
+        },
     };
     const compute_desc_set_layout = try device.createDescriptorSetLayout(&.{
         .flags = .{},
@@ -461,7 +507,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         },
         .{
             .type = .storage_buffer,
-            .descriptor_count = 5,
+            .descriptor_count = 6,
         },
     };
     const desc_pool = try device.createDescriptorPool(&.{
@@ -558,6 +604,21 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             .p_image_info = undefined,
             .p_texel_buffer_view = undefined,
         },
+        .{
+            .dst_set = frag_desc_set,
+            .dst_binding = 5,
+            .dst_array_element = 0,
+            .descriptor_count = 1,
+            .descriptor_type = .storage_buffer,
+            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                .buffer = reduction.buffer,
+                .offset = 0,
+                .range = vk.WHOLE_SIZE,
+            }},
+            // OOF: ??
+            .p_image_info = undefined,
+            .p_texel_buffer_view = undefined,
+        },
     };
     device.updateDescriptorSets(frag_desc_set_updates.len, &frag_desc_set_updates, 0, null);
     const compute_desc_set_updates = [_]vk.WriteDescriptorSet{
@@ -644,6 +705,21 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             .descriptor_type = .storage_buffer,
             .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
                 .buffer = screen_depth.buffer,
+                .offset = 0,
+                .range = vk.WHOLE_SIZE,
+            }},
+            // OOF: ??
+            .p_image_info = undefined,
+            .p_texel_buffer_view = undefined,
+        },
+        .{
+            .dst_set = compute_desc_set,
+            .dst_binding = 6,
+            .dst_array_element = 0,
+            .descriptor_count = 1,
+            .descriptor_type = .storage_buffer,
+            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                .buffer = reduction.buffer,
                 .offset = 0,
                 .range = vk.WHOLE_SIZE,
             }},
@@ -799,31 +875,44 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     const compute_pipelines = blk: {
         var pipelines = [_]struct {
             path: [:0]const u8,
-            define: []const u8,
+            define: []const []const u8,
             group_x: u32 = 1,
             group_y: u32 = 1,
             group_z: u32 = 1,
+            reduction_factor: ?u32 = null,
             pipeline: vk.Pipeline = undefined,
         }{
             .{
                 .path = "./src/shader.glsl",
-                .define = "EYEFACE_CLEAR_BUFS",
+                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_CLEAR_BUFS" },
                 .group_x = app_state.voxels.side * app_state.voxels.side * app_state.voxels.side / 64,
             },
             .{
                 .path = "./src/shader.glsl",
-                .define = "EYEFACE_VOXELIZE",
-                .group_x = app_state.voxelization_points_x_64,
-            },
-            .{
-                .path = "./src/shader.glsl",
-                .define = "EYEFACE_OCCLUSION",
-                .group_x = app_state.voxels.side * app_state.voxels.side * app_state.voxels.side / 64,
-            },
-            .{
-                .path = "./src/shader.glsl",
-                .define = "EYEFACE_ITERATE",
+                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_ITERATE" },
                 .group_x = app_state.points_x_64,
+            },
+            .{
+                .path = "./src/shader.glsl",
+                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_REDUCE", "EYEFACE_REDUCE_MIN" },
+                .reduction_factor = 256,
+                .group_x = app_state.reduction_points_x_64,
+            },
+            .{
+                .path = "./src/shader.glsl",
+                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_REDUCE", "EYEFACE_REDUCE_MAX" },
+                .reduction_factor = 256,
+                .group_x = app_state.reduction_points_x_64,
+            },
+            .{
+                .path = "./src/shader.glsl",
+                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_PROJECT" },
+                .group_x = app_state.points_x_64,
+            },
+            .{
+                .path = "./src/shader.glsl",
+                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_OCCLUSION" },
+                .group_x = app_state.voxels.side * app_state.voxels.side * app_state.voxels.side / 64,
             },
         };
 
@@ -833,7 +922,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
                 const frag: utils.Glslc.Compiler.Code = .{ .path = .{
                     .main = p.path,
                     .include = &[_][]const u8{},
-                    .definitions = &[_][]const u8{ "EYEFACE_COMPUTE", p.define },
+                    .definitions = p.define,
                 } };
                 // _ = compiler.dump_assembly(allocator, &frag);
                 const res = try compiler.compile(
@@ -1117,22 +1206,35 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             for (compute_pipelines) |p| {
                 device.cmdBindPipeline(cmdbuf, .compute, p.pipeline);
                 device.cmdBindDescriptorSets(cmdbuf, .compute, compute_pipeline_layout, 0, 1, @ptrCast(&compute_desc_set), 0, null);
-                device.cmdDispatch(cmdbuf, p.group_x, p.group_y, p.group_z);
 
-                device.cmdPipelineBarrier(cmdbuf, .{
-                    .compute_shader_bit = true,
-                }, .{
-                    .compute_shader_bit = true,
-                }, .{}, 1, &[_]vk.MemoryBarrier{.{
-                    .src_access_mask = .{
-                        .shader_read_bit = true,
-                        .shader_write_bit = true,
-                    },
-                    .dst_access_mask = .{
-                        .shader_read_bit = true,
-                        .shader_write_bit = true,
-                    },
-                }}, 0, null, 0, null);
+                var x = p.group_x;
+                while (x >= 1) {
+                    device.cmdDispatch(cmdbuf, x, p.group_y, p.group_z);
+                    device.cmdPipelineBarrier(cmdbuf, .{
+                        .compute_shader_bit = true,
+                    }, .{
+                        .compute_shader_bit = true,
+                    }, .{}, 1, &[_]vk.MemoryBarrier{.{
+                        .src_access_mask = .{
+                            .shader_read_bit = true,
+                            .shader_write_bit = true,
+                        },
+                        .dst_access_mask = .{
+                            .shader_read_bit = true,
+                            .shader_write_bit = true,
+                        },
+                    }}, 0, null, 0, null);
+
+                    if (x == 1) {
+                        break;
+                    }
+
+                    if (p.reduction_factor) |r| {
+                        x = x / r + @as(u32, @intCast(@intFromBool(x % r > 0)));
+                    } else {
+                        break;
+                    }
+                }
             }
 
             // device.cmdPipelineBarrier(cmdbuf, .{
@@ -1210,6 +1312,8 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         .screen_buffer_memory = screen.memory,
         .screen_depth_buffer = screen_depth.buffer,
         .screen_depth_buffer_memory = screen_depth.memory,
+        .reduction_buffer = reduction.buffer,
+        .reduction_buffer_memory = reduction.memory,
         .descriptor_pool = desc_pool,
         .frag_descriptor_set_layout = frag_desc_set_layout,
         .frag_descriptor_set = frag_desc_set,
@@ -1263,6 +1367,10 @@ pub fn deinit(self: *@This(), device: *Device) void {
     defer {
         device.destroyBuffer(self.screen_depth_buffer, null);
         device.freeMemory(self.screen_depth_buffer_memory, null);
+    }
+    defer {
+        device.destroyBuffer(self.reduction_buffer, null);
+        device.freeMemory(self.reduction_buffer_memory, null);
     }
     defer device.destroyDescriptorSetLayout(self.frag_descriptor_set_layout, null);
     defer device.destroyDescriptorSetLayout(self.compute_descriptor_set_layout, null);

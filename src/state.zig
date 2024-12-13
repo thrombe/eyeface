@@ -22,6 +22,7 @@ pub const AppState = struct {
 
     frame: u32 = 0,
     time: f32 = 0,
+    deltatime: f32 = 0,
 
     transform_generator: Uniforms.TransformSet.Builder.Generator = .{},
     transforms: Uniforms.TransformSet.Builder,
@@ -35,6 +36,7 @@ pub const AppState = struct {
     iterations: u32 = 20,
     voxelization_points_x_64: u32 = 50000,
     voxelization_iterations: u32 = 4,
+    reduction_points_x_64: u32 = 50000,
 
     background_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#282828ff"),
     occlusion_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#401a1aff"),
@@ -45,8 +47,6 @@ pub const AppState = struct {
     voxels: struct {
         // world space coords of center of the the voxel grid
         center: Vec4 = .{},
-        // world space half size of voxel grid
-        half_size: f32 = 3,
         // number of voxels along 1 edge (side ** 3 is the entire volume)
         side: u32 = 300,
     } = .{},
@@ -119,6 +119,7 @@ pub const AppState = struct {
 
         self.frame += 1;
         self.time += delta;
+        self.deltatime = delta;
 
         if (!self.pause_t) {
             // - [Lerp smoothing is broken](https://youtu.be/LSNQuFEDOyQ?si=-_bGNwqZFC_j5dJF&t=3012)
@@ -161,7 +162,6 @@ pub const AppState = struct {
                 .right = @intCast(@intFromBool(self.mouse.right)),
             },
             .voxel_grid_center = self.voxels.center,
-            .voxel_grid_half_size = self.voxels.half_size,
             .voxel_grid_side = self.voxels.side,
             .occlusion_color = self.occlusion_color,
             .sparse_color = self.sparse_color,
@@ -172,8 +172,11 @@ pub const AppState = struct {
             .iterations = self.iterations,
             .voxelization_points = self.voxelization_points_x_64 * 64,
             .voxelization_iterations = self.voxelization_iterations,
+            .reduction_points = self.reduction_points_x_64 * 64,
             .frame = self.frame,
             .time = self.time,
+            .deltatime = self.deltatime,
+            .lambda = self.lambda,
             .width = window.extent.width,
             .height = window.extent.height,
         };
@@ -218,9 +221,11 @@ pub const GuiState = struct {
         _ = c.ImGui_SliderFloat("Speed", &state.speed, 0.1, 10.0);
         _ = c.ImGui_SliderFloat("Sensitivity", &state.sensitivity, 0.1, 10.0);
 
-        _ = c.ImGui_SliderInt("points (x 64)", @ptrCast(&state.points_x_64), 100, 1000000);
+        _ = c.ImGui_SliderInt("points (x 64)", @ptrCast(&state.points_x_64), 0, 1000000);
         state.voxelization_points_x_64 = @min(state.voxelization_points_x_64, state.points_x_64);
-        _ = c.ImGui_SliderInt("voxelization points (x 64)", @ptrCast(&state.voxelization_points_x_64), 100, @intCast(state.points_x_64));
+        _ = c.ImGui_SliderInt("voxelization points (x 64)", @ptrCast(&state.voxelization_points_x_64), 0, @intCast(state.points_x_64));
+        state.reduction_points_x_64 = @min(state.reduction_points_x_64, state.points_x_64);
+        _ = c.ImGui_SliderInt("reduction points (x 64)", @ptrCast(&state.reduction_points_x_64), 0, @intCast(state.points_x_64));
         _ = c.ImGui_SliderInt("iterations", @ptrCast(&state.iterations), 0, 100);
         _ = c.ImGui_SliderInt("voxelization iterations", @ptrCast(&state.voxelization_iterations), 0, 20);
 
@@ -237,7 +242,6 @@ pub const GuiState = struct {
 
         _ = c.ImGui_DragFloat3("Voxels Center", @ptrCast(&state.voxels.center));
 
-        _ = c.ImGui_SliderFloat("Voxel Half Size", &state.voxels.half_size, 0.1, 10.0);
         _ = c.ImGui_SliderInt("Voxel Side", @ptrCast(&state.voxels.side), 1, 500);
     }
 

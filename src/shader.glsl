@@ -16,7 +16,6 @@ struct Uniforms {
     vec4 sparse_color;
     vec4 background_color;
     vec4 voxel_grid_center;
-    float voxel_grid_half_size;
     int voxel_grid_side;
     float occlusion_multiplier;
     float occlusion_attenuation;
@@ -24,8 +23,11 @@ struct Uniforms {
     int iterations;
     int voxelization_points;
     int voxelization_iterations;
+    int reduction_points;
     uint frame;
     float time;
+    float deltatime;
+    float lambda;
     uint width;
     uint height;
 };
@@ -74,6 +76,11 @@ ivec3 to3D(int id, int side) {
     layout(set = 0, binding = 5) buffer DepthBuffer {
         float depth[];
     };
+    layout(set = 0, binding = 6) buffer VoxelMetadataBuffer {
+        vec4 voxel_grid_min;
+        vec4 voxel_grid_max;
+        vec3 reduction_buf[];
+    };
 #endif // EYEFACE_COMPUTE
 
 #ifdef EYEFACE_RENDER
@@ -88,6 +95,11 @@ ivec3 to3D(int id, int side) {
     };
     layout(set = 0, binding = 4) readonly buffer DepthBuffer {
         float depth[];
+    };
+    layout(set = 0, binding = 5) readonly buffer VoxelMetadataBuffer {
+        vec4 voxel_grid_min;
+        vec4 voxel_grid_max;
+        vec3 reduction_buf[];
     };
 #endif // EYEFACE_RENDER
 
@@ -115,6 +127,7 @@ float voxelGridSample(ivec3 pos) {
     void main() {
         uint id = gl_LocalInvocationID.x + gl_LocalInvocationID.y * gl_WorkGroupSize.x + gl_WorkGroupID.x * 64;
 
+        // TODO: bounds check
         voxels[id] = 0;
         occlusion[id] = 0.0;
         depth[id] = 1.1;
@@ -122,56 +135,111 @@ float voxelGridSample(ivec3 pos) {
     }
 #endif // EYEFACE_CLEAR_BUFS
 
-#ifdef EYEFACE_VOXELIZE
+#ifdef EYEFACE_ITERATE
     layout (local_size_x = 8, local_size_y = 8) in;
     void main() {
         uint id = gl_LocalInvocationID.x + gl_LocalInvocationID.y * gl_WorkGroupSize.x + gl_WorkGroupID.x * 64;
-        // uint id = gl_GlobalInvocationID.x;
         vec4 pos = vertices[id].pos;
 
         uint seed = rand_xorshift(id + ubo.frame * 11335474);
-        for (int i=0; i<ubo.voxelization_iterations; i++) {
-            seed = rand_xorshift(seed);
-            pos = ubo.transforms[seed % 5] * pos;
-
-            int side = ubo.voxel_grid_side;
-            vec3 grid_pos = pos.xyz;
-            grid_pos.xyz -= ubo.voxel_grid_center.xyz;
-            grid_pos /= ubo.voxel_grid_half_size;
-            grid_pos *= float(side);
-            grid_pos += float(side)/2.0;
-            if (inGrid(ivec3(grid_pos))) {
-                voxels[to1D(ivec3(grid_pos), side)] += 1;
-            }
-        }
-
+        pos = ubo.transforms[seed % 5] * pos;
         vertices[id].pos = pos;
+        reduction_buf[id] = pos.xyz;
     }
-#endif // EYEFACE_VOXELIZE
+#endif // EYEFACE_ITERATE
 
-#ifdef EYEFACE_OCCLUSION
+#ifdef EYEFACE_REDUCE
+    shared vec4 group_buf[256];
+
+    vec4 reduce(vec4 a, vec4 b) {
+        #ifdef EYEFACE_REDUCE_MIN
+            return min(a, b);
+        #endif
+        #ifdef EYEFACE_REDUCE_MAX
+            return max(a, b);
+        #endif
+    }
+
+    void set_reduction_result(vec3 res) {
+        #ifdef EYEFACE_REDUCE_MIN
+            vec4 old = voxel_grid_min;
+        #endif
+        #ifdef EYEFACE_REDUCE_MAX
+            vec4 old = voxel_grid_max;
+        #endif
+
+        vec4 new = vec4(res, 0.0);
+
+        vec3 old_center = (voxel_grid_max.xyz + voxel_grid_min.xyz)/2.0;
+        float old_size = length(voxel_grid_max.xyz - voxel_grid_min.xyz)/2.0;
+        float new_size = length(new.xyz - old_center);
+        vec3 compensate = vec3(new_size) * 0.10;
+
+        #ifdef EYEFACE_REDUCE_MIN
+            new -= vec4(compensate, 0.0);
+        #endif
+        #ifdef EYEFACE_REDUCE_MAX
+            new += vec4(compensate, 0.0);
+        #endif
+
+        // float e = 0.0;
+        // if (old_size < new_size) {
+        //     e = 1.0 - exp(-16.0 * ubo.deltatime);
+        // } else {
+        //     e = 1.0 - exp(-0.01 * ubo.deltatime);
+        // }
+        // e = 1.0 - exp(-20.0 * ubo.deltatime);
+        // new = mix(old, new, e);
+
+        #ifdef EYEFACE_REDUCE_MIN
+            voxel_grid_min = new;
+        #endif
+        #ifdef EYEFACE_REDUCE_MAX
+            voxel_grid_max = new;
+        #endif
+    }
+
     layout (local_size_x = 8, local_size_y = 8) in;
     void main() {
-        int id = int(gl_LocalInvocationID.x) + int(gl_LocalInvocationID.y) * int(gl_WorkGroupSize.x) + int(gl_WorkGroupID.x) * 64;
-        // uint id = gl_GlobalInvocationID.x;
-        // vec4 pos = vertices[id].pos;
-        int side = ubo.voxel_grid_side;
-        ivec3 pos = to3D(id, side);
-        float o = 0.0;
-        for (int z = -1; z < 2; z += 1) {
-            for (int y = -1; y < 2; y += 1) {
-                for (int x = -1; x < 2; x += 1) {
-                    o += voxelGridSample(pos + ivec3(x, y, z));
-                }
+        uint id = gl_LocalInvocationID.x + gl_LocalInvocationID.y * 8;
+        uint offset = gl_WorkGroupID.x * 64;
+        uint gid = id + offset;
+
+        uint index1 = min(gid * 4, ubo.reduction_points - 1);
+        uint index2 = min(1 + gid * 4, ubo.reduction_points - 1);
+        vec4 a = vec4(reduction_buf[index1].xyz, 0.0);
+        vec4 b = vec4(reduction_buf[index2].xyz, 0.0);
+        group_buf[id] = a;
+        group_buf[id + 64] = b;
+
+        uint index3 = min(2 + gid * 4, ubo.reduction_points - 1);
+        uint index4 = min(3 + gid * 4, ubo.reduction_points - 1);
+        vec4 c = vec4(reduction_buf[index3].xyz, 0.0);
+        vec4 d = vec4(reduction_buf[index4].xyz, 0.0);
+        group_buf[id + 128] = c;
+        group_buf[id + 128 + 64] = d;
+
+        barrier();
+
+        for (int i=64; i>0; i>>=1) {
+            if (id < i) {
+                vec4 a = group_buf[id];
+                vec4 b = group_buf[id + i];
+                group_buf[id] = reduce(a, b);
+            }
+            barrier();
+        }
+
+        if (id == 0) {
+            reduction_buf[gl_WorkGroupID.x] = group_buf[0].xyz;
+            if (gl_NumWorkGroups.x == 1) {
+                set_reduction_result(group_buf[0].xyz);
             }
         }
-        o /= 27.0;
-        o = 1.0 - o;
-        occlusion[id] = pow(clamp(o * ubo.occlusion_multiplier, 0.0, 1.0), ubo.occlusion_attenuation);
     }
-#endif // EYEFACE_OCCLUSION
+#endif // EYEFACE_REDUCE
 
-#ifdef EYEFACE_ITERATE
+#ifdef EYEFACE_PROJECT
     layout (local_size_x = 8, local_size_y = 8) in;
     void main() {
         uint id = gl_LocalInvocationID.x + gl_LocalInvocationID.y * gl_WorkGroupSize.x + gl_WorkGroupID.x * 64;
@@ -182,6 +250,18 @@ float voxelGridSample(ivec3 pos) {
         for (int i=0; i<ubo.iterations; i++) {
             seed = rand_xorshift(seed);
             pos = ubo.transforms[seed % 5] * pos;
+
+            if (i < ubo.voxelization_iterations && id < ubo.voxelization_points) {
+                int side = ubo.voxel_grid_side;
+                vec3 grid_pos = pos.xyz;
+                grid_pos.xyz -= ubo.voxel_grid_center.xyz + (voxel_grid_min.xyz + voxel_grid_max.xyz)/2.0;
+                grid_pos /= voxel_grid_max.xyz - voxel_grid_min.xyz;
+                grid_pos *= float(side);
+                grid_pos += float(side)/2.0;
+                if (inGrid(ivec3(grid_pos))) {
+                    voxels[to1D(ivec3(grid_pos), side)] += 1;
+                }
+            }
 
             vec4 screen_pos = ubo.world_to_screen * pos;
 
@@ -212,8 +292,8 @@ float voxelGridSample(ivec3 pos) {
 
             int side = ubo.voxel_grid_side;
             vec3 grid_pos = pos.xyz;
-            grid_pos -= ubo.voxel_grid_center.xyz;
-            grid_pos /= ubo.voxel_grid_half_size;
+            grid_pos.xyz -= ubo.voxel_grid_center.xyz + (voxel_grid_min.xyz + voxel_grid_max.xyz)/2.0;
+            grid_pos /= voxel_grid_max.xyz - voxel_grid_min.xyz;
             grid_pos *= float(side);
             grid_pos += float(side)/2.0;
             if (inGrid(ivec3(grid_pos))) {
@@ -225,9 +305,29 @@ float voxelGridSample(ivec3 pos) {
             }
         }
 
-        vertices[id].pos = pos;
+        // vertices[id].pos = pos;
     }
-#endif // EYEFACE_ITERATE
+#endif // EYEFACE_PROJECT
+
+#ifdef EYEFACE_OCCLUSION
+    layout (local_size_x = 8, local_size_y = 8) in;
+    void main() {
+        int id = int(gl_LocalInvocationID.x) + int(gl_LocalInvocationID.y) * int(gl_WorkGroupSize.x) + int(gl_WorkGroupID.x) * 64;
+        int side = ubo.voxel_grid_side;
+        ivec3 pos = to3D(id, side);
+        float o = 0.0;
+        for (int z = -1; z < 2; z += 1) {
+            for (int y = -1; y < 2; y += 1) {
+                for (int x = -1; x < 2; x += 1) {
+                    o += voxelGridSample(pos + ivec3(x, y, z));
+                }
+            }
+        }
+        o /= 27.0;
+        o = 1.0 - o;
+        occlusion[id] = pow(clamp(o * ubo.occlusion_multiplier, 0.0, 1.0), ubo.occlusion_attenuation);
+    }
+#endif // EYEFACE_OCCLUSION
 
 #ifdef EYEFACE_VERT
     void main() {

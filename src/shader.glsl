@@ -152,7 +152,7 @@ float voxelGridSample(ivec3 pos) {
 #endif // EYEFACE_ITERATE
 
 #ifdef EYEFACE_REDUCE
-    shared vec4 group_buf[256];
+    shared vec4 group_buf[128];
 
     vec4 reduce(vec4 a, vec4 b) {
         #ifdef EYEFACE_REDUCE_MIN
@@ -208,19 +208,16 @@ float voxelGridSample(ivec3 pos) {
         uint offset = gl_WorkGroupID.x * 64;
         uint gid = id + offset;
 
-        uint index1 = min(gid * 4, ubo.reduction_points - 1);
+        uint index1 = min(0 + gid * 4, ubo.reduction_points - 1);
         uint index2 = min(1 + gid * 4, ubo.reduction_points - 1);
-        vec4 a = vec4(reduction_buf[index1].xyz, 0.0);
-        vec4 b = vec4(reduction_buf[index2].xyz, 0.0);
-        group_buf[id] = a;
-        group_buf[id + 64] = b;
-
         uint index3 = min(2 + gid * 4, ubo.reduction_points - 1);
         uint index4 = min(3 + gid * 4, ubo.reduction_points - 1);
+        vec4 a = vec4(reduction_buf[index1].xyz, 0.0);
+        vec4 b = vec4(reduction_buf[index2].xyz, 0.0);
         vec4 c = vec4(reduction_buf[index3].xyz, 0.0);
         vec4 d = vec4(reduction_buf[index4].xyz, 0.0);
-        group_buf[id + 128] = c;
-        group_buf[id + 128 + 64] = d;
+        group_buf[id] = reduce(a, b);
+        group_buf[id + 64] = reduce(c, d);
 
         barrier();
 

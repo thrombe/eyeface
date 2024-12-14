@@ -30,10 +30,13 @@ pub const AppState = struct {
 
     t: f32 = 0,
     lambda: f32 = 1.0,
+    visual_scale: f32 = 4.0,
+    visual_transform_lambda: f32 = 1.0,
     pause_t: bool = false,
     pause_generator: bool = false,
     points_x_64: u32 = 50000,
     iterations: u32 = 20,
+    voxel_grid_compensation_perc: f32 = 0.1,
     voxelization_points_x_64: u32 = 50000,
     voxelization_iterations: u32 = 4,
     reduction_points_x_64: u32 = 50000,
@@ -177,6 +180,9 @@ pub const AppState = struct {
             .time = self.time,
             .deltatime = self.deltatime,
             .lambda = self.lambda,
+            .visual_scale = self.visual_scale,
+            .visual_transform_lambda = self.visual_transform_lambda,
+            .voxel_grid_compensation_perc = self.voxel_grid_compensation_perc,
             .width = window.extent.width,
             .height = window.extent.height,
         };
@@ -221,6 +227,9 @@ pub const GuiState = struct {
         _ = c.ImGui_SliderFloat("Speed", &state.speed, 0.1, 10.0);
         _ = c.ImGui_SliderFloat("Sensitivity", &state.sensitivity, 0.1, 10.0);
 
+        _ = c.ImGui_SliderFloat("Visual Scale", &state.visual_scale, 0.01, 10.0);
+        _ = c.ImGui_SliderFloat("Visual Transform Lambda", &state.visual_transform_lambda, 0.0, 25.0);
+        _ = c.ImGui_SliderFloat("voxel grid compensation perc", &state.voxel_grid_compensation_perc, -1.0, 1.0);
         _ = c.ImGui_SliderInt("points (x 64)", @ptrCast(&state.points_x_64), 0, 1000000);
         state.voxelization_points_x_64 = @min(state.voxelization_points_x_64, state.points_x_64);
         _ = c.ImGui_SliderInt("voxelization points (x 64)", @ptrCast(&state.voxelization_points_x_64), 0, @intCast(state.points_x_64));

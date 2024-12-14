@@ -91,6 +91,7 @@ pub const Uniforms = extern struct {
     background_color: Vec4,
     voxel_grid_center: Vec4,
     voxel_grid_side: u32,
+    voxel_grid_compensation_perc: f32,
     occlusion_multiplier: f32,
     occlusion_attenuation: f32,
     points: u32,
@@ -102,6 +103,8 @@ pub const Uniforms = extern struct {
     time: f32,
     deltatime: f32,
     lambda: f32,
+    visual_scale: f32,
+    visual_transform_lambda: f32,
     width: u32,
     height: u32,
 
@@ -333,7 +336,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
 
     const reduction = blk: {
         const buffer = try device.createBuffer(&.{
-            .size = @sizeOf(f32) * 4 * 2 + @sizeOf(f32) * 3 * app_state.reduction_points_x_64 * 64,
+            .size = @sizeOf(f32) * 4 * 3 + @sizeOf(f32) * 3 * app_state.reduction_points_x_64 * 64,
             .usage = .{
                 .storage_buffer_bit = true,
             },

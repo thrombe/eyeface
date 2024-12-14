@@ -17,6 +17,7 @@ struct Uniforms {
     vec4 background_color;
     vec4 voxel_grid_center;
     int voxel_grid_side;
+    float voxel_grid_compensation_perc;
     float occlusion_multiplier;
     float occlusion_attenuation;
     int points;
@@ -28,6 +29,8 @@ struct Uniforms {
     float time;
     float deltatime;
     float lambda;
+    float visual_scale;
+    float visual_transform_lambda;
     uint width;
     uint height;
 };
@@ -79,6 +82,7 @@ ivec3 to3D(int id, int side) {
     layout(set = 0, binding = 6) buffer VoxelMetadataBuffer {
         vec4 voxel_grid_min;
         vec4 voxel_grid_max;
+        vec4 voxel_grid_mid;
         vec3 reduction_buf[];
     };
 #endif // EYEFACE_COMPUTE
@@ -99,6 +103,7 @@ ivec3 to3D(int id, int side) {
     layout(set = 0, binding = 5) readonly buffer VoxelMetadataBuffer {
         vec4 voxel_grid_min;
         vec4 voxel_grid_max;
+        vec4 voxel_grid_mid;
         vec3 reduction_buf[];
     };
 #endif // EYEFACE_RENDER
@@ -173,10 +178,9 @@ float voxelGridSample(ivec3 pos) {
 
         vec4 new = vec4(res, 0.0);
 
-        vec3 old_center = (voxel_grid_max.xyz + voxel_grid_min.xyz)/2.0;
-        float old_size = length(voxel_grid_max.xyz - voxel_grid_min.xyz)/2.0;
-        float new_size = length(new.xyz - old_center);
-        vec3 compensate = vec3(new_size) * 0.10;
+        float old_size = length(old.xyz - voxel_grid_mid.xyz);
+        float new_size = length(new.xyz - voxel_grid_mid.xyz);
+        vec3 compensate = vec3(new_size) * ubo.voxel_grid_compensation_perc;
 
         #ifdef EYEFACE_REDUCE_MIN
             new -= vec4(compensate, 0.0);
@@ -199,6 +203,18 @@ float voxelGridSample(ivec3 pos) {
         #endif
         #ifdef EYEFACE_REDUCE_MAX
             voxel_grid_max = new;
+
+            vec3 mid = (new.xyz + voxel_grid_min.xyz)/2.0;
+            float size = length(new.xyz - voxel_grid_min.xyz)/2.0;
+            float e = 1.0 - exp(-ubo.visual_transform_lambda * ubo.deltatime);
+            voxel_grid_mid.xyz = mix(voxel_grid_mid.xyz, mid, e);
+
+            size /= ubo.visual_scale;
+            voxel_grid_mid.w = mix(voxel_grid_mid.w, size, e);
+
+            if (voxel_grid_mid.w < 0.001) {
+                voxel_grid_mid.w = 1.0;
+            }
         #endif
     }
 
@@ -263,7 +279,10 @@ float voxelGridSample(ivec3 pos) {
                 }
             }
 
-            vec4 screen_pos = ubo.world_to_screen * pos;
+            vec4 screen_pos = pos;
+            screen_pos.xyz -= voxel_grid_mid.xyz;
+            screen_pos.xyz /= voxel_grid_mid.w;
+            screen_pos = ubo.world_to_screen * screen_pos;
 
             // behind the camera
             if (screen_pos.z < 0.0) {

@@ -127,11 +127,12 @@ float voxelGridSample(ivec3 pos) {
     void main() {
         uint id = gl_LocalInvocationID.x + gl_LocalInvocationID.y * gl_WorkGroupSize.x + gl_WorkGroupID.x * 64;
 
-        // TODO: bounds check
         voxels[id] = 0;
         occlusion[id] = 0.0;
-        depth[id] = 1.1;
-        screen[id] = vec4(0.0);
+        if (id < ubo.width * ubo.height) {
+            depth[id] = 1.1;
+            screen[id] = vec4(0.0);
+        }
     }
 #endif // EYEFACE_CLEAR_BUFS
 
@@ -144,7 +145,9 @@ float voxelGridSample(ivec3 pos) {
         uint seed = rand_xorshift(id + ubo.frame * 11335474);
         pos = ubo.transforms[seed % 5] * pos;
         vertices[id].pos = pos;
-        reduction_buf[id] = pos.xyz;
+        if (id < ubo.reduction_points) {
+            reduction_buf[id] = pos.xyz;
+        }
     }
 #endif // EYEFACE_ITERATE
 

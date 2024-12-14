@@ -333,7 +333,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
 
     const reduction = blk: {
         const buffer = try device.createBuffer(&.{
-            .size = @sizeOf(f32) * 4 * 2 + @sizeOf(f32) * 3 * app_state.points_x_64 * 64,
+            .size = @sizeOf(f32) * 4 * 2 + @sizeOf(f32) * 3 * app_state.reduction_points_x_64 * 64,
             .usage = .{
                 .storage_buffer_bit = true,
             },

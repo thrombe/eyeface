@@ -13,6 +13,10 @@ Want to see it in action? Check out the demo on YouTube: [Eyeface demo](https://
 ![screenshot 4](./screenshots/s4.jpeg)
 ![screenshot 5](./screenshots/s5.jpeg)
 
+# Performance
+This implementation can do 200 Million points at 30fps on nvidia 4050 mobile.
+but it looks acceptably good even at 12 million points. and starts having diminishing returns after 50-70 million points.
+
 # How it works
 The compute pipeline has a few passes
   - pass 1 clears all buffers that need to be cleared.

@@ -401,6 +401,7 @@ float voxelGridSample(ivec3 pos) {
         } else if (type > 0.5) {
             vec3 pos = screen[index].xyz;
             float dist = length(pos - ubo.eye.xyz);
+            // https://www.desmos.com/calculator/ted75acgr5
             dist = 1.0 - 1.0/(1.0 + exp(-pow(dist, ubo.occlusion_attenuation) * 6.5 / (5.0 * ubo.occlusion_multiplier) + 3.5));
 
             f_color = vec4(mix(ubo.occlusion_color.xyz, ubo.sparse_color.xyz, dist), 1.0);

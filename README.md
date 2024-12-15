@@ -8,10 +8,10 @@ Want to see it in action? Check out the demo on YouTube: [Eyeface demo](https://
 
 # Have a look at some screenshots
 ![screenshot 1](./screenshots/s1.jpeg)
-![screenshot 2](./screenshots/s2.jpeg)
-![screenshot 3](./screenshots/s3.jpeg)
-![screenshot 4](./screenshots/s4.jpeg)
-![screenshot 5](./screenshots/s5.jpeg)
+lookat these |  or maybe these
+:--:|:--:
+![screenshot 2](./screenshots/s2.jpeg) | ![screenshot 3](./screenshots/s3.jpeg)
+![screenshot 4](./screenshots/s4.jpeg) | ![screenshot 5](./screenshots/s5.jpeg)
 
 # Performance
 This implementation can do 200 Million points at 30fps 2560x1600 on nvidia 4050 mobile.

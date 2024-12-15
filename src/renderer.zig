@@ -888,7 +888,10 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             .{
                 .path = "./src/shader.glsl",
                 .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_CLEAR_BUFS" },
-                .group_x = app_state.voxels.side * app_state.voxels.side * app_state.voxels.side / 64,
+                .group_x = @max(app_state.voxels.side * app_state.voxels.side * app_state.voxels.side / 64, blk1: {
+                    const s = engine.window.extent.width * engine.window.extent.height;
+                    break :blk1 s / 64 + @as(u32, @intCast(@intFromBool(s % 64 > 0)));
+                }),
             },
             .{
                 .path = "./src/shader.glsl",

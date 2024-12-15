@@ -132,8 +132,11 @@ float voxelGridSample(ivec3 pos) {
     void main() {
         uint id = gl_LocalInvocationID.x + gl_LocalInvocationID.y * gl_WorkGroupSize.x + gl_WorkGroupID.x * 64;
 
-        voxels[id] = 0;
-        occlusion[id] = 0.0;
+        uint side = ubo.voxel_grid_side;
+        if (id < side * side * side) {
+            voxels[id] = 0;
+            occlusion[id] = 0.0;
+        }
         if (id < ubo.width * ubo.height) {
             depth[id] = 1.1;
             screen[id] = vec4(0.0);

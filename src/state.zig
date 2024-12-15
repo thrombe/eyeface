@@ -44,8 +44,8 @@ pub const AppState = struct {
     background_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#282828ff"),
     occlusion_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#401a1aff"),
     sparse_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#e0e7cdff"),
-    occlusion_multiplier: f32 = 1.25,
-    occlusion_attenuation: f32 = 2.0,
+    occlusion_multiplier: f32 = 1.1,
+    occlusion_attenuation: f32 = 0.93,
 
     voxels: struct {
         // world space coords of center of the the voxel grid
@@ -242,8 +242,8 @@ pub const GuiState = struct {
         _ = c.ImGui_ColorEdit3("Occlusion Color", @ptrCast(&state.occlusion_color), c.ImGuiColorEditFlags_Float);
         _ = c.ImGui_ColorEdit3("Sparse Color", @ptrCast(&state.sparse_color), c.ImGuiColorEditFlags_Float);
 
-        _ = c.ImGui_SliderFloat("Occlusion Multiplier", &state.occlusion_multiplier, 0.1, 10.0);
-        _ = c.ImGui_SliderFloat("Occlusion Attenuation", &state.occlusion_attenuation, 0.1, 10.0);
+        _ = c.ImGui_SliderFloat("Occlusion Multiplier", &state.occlusion_multiplier, 0.01, 2.0);
+        _ = c.ImGui_SliderFloat("Occlusion Attenuation", &state.occlusion_attenuation, 0.1, 4.0);
 
         _ = c.ImGui_SliderFloat("Lambda", &state.lambda, 0.1, 25.0);
         _ = c.ImGui_Checkbox("Pause t (pause_t)", &state.pause_t);

@@ -345,7 +345,7 @@ float voxelGridSample(ivec3 pos) {
         }
         o /= 27.0;
         o = 1.0 - o;
-        occlusion[id] = pow(clamp(o * ubo.occlusion_multiplier, 0.0, 1.0), ubo.occlusion_attenuation);
+        occlusion[id] = o;
     }
 #endif // EYEFACE_OCCLUSION
 
@@ -395,13 +395,13 @@ float voxelGridSample(ivec3 pos) {
 					}
 				}
 			}
+            value = pow(max(value, 0.0)*ubo.occlusion_multiplier, ubo.occlusion_attenuation);
 
             f_color = vec4(mix(ubo.occlusion_color.xyz, ubo.sparse_color.xyz, value), 1.0);
         } else if (type > 0.5) {
             vec3 pos = screen[index].xyz;
             float dist = length(pos - ubo.eye.xyz);
-            dist = 1.0/dist;
-            dist = dist * dist;
+            dist = 1.0 - 1.0/(1.0 + exp(-pow(dist, ubo.occlusion_attenuation) * 6.5 / (5.0 * ubo.occlusion_multiplier) + 3.5));
 
             f_color = vec4(mix(ubo.occlusion_color.xyz, ubo.sparse_color.xyz, dist), 1.0);
         } else {

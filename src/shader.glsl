@@ -380,21 +380,21 @@ float voxelGridSample(ivec3 pos) {
             int index = to1D(ivec3(pos), side);
 
             // trilinear occlusion sample :/
-			ivec3 vi = ivec3(pos);
-			float weight1 = 0.0f;
-			float weight2 = 0.0f;
-			float weight3 = 0.0f;
-			float value = 0.0f;
-			for (int i = 0; i < 2; ++i) {
-				weight1 = 1 - min(abs(pos.x - (vi.x + i)), side);
-				for (int j = 0; j < 2; ++j) {
-					weight2 = 1 - min(abs(pos.y - (vi.y + j)), side);
-					for (int k = 0; k < 2; ++k) {
-						weight3 = 1 - min(abs(pos.z - (vi.z + k)), side);
-						value += weight1 * weight2 * weight3 * occlusion[to1D(vi + ivec3(i, j, k), side)];
-					}
-				}
-			}
+            ivec3 vi = ivec3(pos);
+            float weight1 = 0.0f;
+            float weight2 = 0.0f;
+            float weight3 = 0.0f;
+            float value = 0.0f;
+            for (int i = 0; i < 2; ++i) {
+                weight1 = 1 - min(abs(pos.x - (vi.x + i)), side);
+                for (int j = 0; j < 2; ++j) {
+                    weight2 = 1 - min(abs(pos.y - (vi.y + j)), side);
+                    for (int k = 0; k < 2; ++k) {
+                        weight3 = 1 - min(abs(pos.z - (vi.z + k)), side);
+                        value += weight1 * weight2 * weight3 * occlusion[to1D(vi + ivec3(i, j, k), side)];
+                    }
+                }
+            }
             value = pow(max(value, 0.0)*ubo.occlusion_multiplier, ubo.occlusion_attenuation);
 
             f_color = vec4(mix(ubo.occlusion_color.xyz, ubo.sparse_color.xyz, value), 1.0);

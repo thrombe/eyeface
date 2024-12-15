@@ -6,6 +6,13 @@ The idea behind this project is inspired by [Acerola's video about IFS fractals]
 # Check out a Demo video
 Want to see it in action? Check out the demo on YouTube: [Eyeface demo](https://youtu.be/qpL7Qpi7AvY)
 
+# Have a look at some screenshots
+![screenshot 1](./screenshots/s1.jpeg)
+![screenshot 2](./screenshots/s2.jpeg)
+![screenshot 3](./screenshots/s3.jpeg)
+![screenshot 4](./screenshots/s4.jpeg)
+![screenshot 5](./screenshots/s5.jpeg)
+
 # How it works
 The compute pipeline has a few passes
   - pass 1 clears all buffers that need to be cleared.

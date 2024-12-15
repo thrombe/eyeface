@@ -282,6 +282,7 @@ float voxelGridSample(ivec3 pos) {
             vec4 screen_pos = pos;
             screen_pos.xyz -= voxel_grid_mid.xyz;
             screen_pos.xyz /= voxel_grid_mid.w;
+            vec4 visual_pos = screen_pos;
             screen_pos = ubo.world_to_screen * screen_pos;
 
             // behind the camera
@@ -319,7 +320,7 @@ float voxelGridSample(ivec3 pos) {
                 screen[si].xyz = grid_pos;
                 screen[si].w = 2.0;
             } else {
-                screen[si].xyz = pos.xyz;
+                screen[si].xyz = visual_pos.xyz;
                 screen[si].w = 1.0;
             }
         }

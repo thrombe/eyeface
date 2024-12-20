@@ -46,6 +46,9 @@ pub const AppState = struct {
     sparse_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#e0e7cdff"),
     occlusion_multiplier: f32 = 1.1,
     occlusion_attenuation: f32 = 0.93,
+    depth_range: f32 = 5.5,
+    depth_offset: f32 = 2.5,
+    depth_attenuation: f32 = 1.05,
 
     voxels: struct {
         // world space coords of center of the the voxel grid
@@ -171,6 +174,9 @@ pub const AppState = struct {
             .background_color = self.background_color,
             .occlusion_multiplier = self.occlusion_multiplier,
             .occlusion_attenuation = self.occlusion_attenuation,
+            .depth_range = self.depth_range,
+            .depth_offset = self.depth_offset,
+            .depth_attenuation = self.depth_attenuation,
             .points = self.points_x_64 * 64,
             .iterations = self.iterations,
             .voxelization_points = self.voxelization_points_x_64 * 64,
@@ -225,7 +231,7 @@ pub const GuiState = struct {
         _ = self;
 
         _ = c.ImGui_SliderFloat("Speed", &state.speed, 0.1, 10.0);
-        _ = c.ImGui_SliderFloat("Sensitivity", &state.sensitivity, 0.1, 10.0);
+        _ = c.ImGui_SliderFloat("Sensitivity", &state.sensitivity, 0.001, 2.0);
 
         _ = c.ImGui_SliderFloat("Visual Scale", &state.visual_scale, 0.01, 10.0);
         _ = c.ImGui_SliderFloat("Visual Transform Lambda", &state.visual_transform_lambda, 0.0, 25.0);
@@ -242,8 +248,11 @@ pub const GuiState = struct {
         _ = c.ImGui_ColorEdit3("Occlusion Color", @ptrCast(&state.occlusion_color), c.ImGuiColorEditFlags_Float);
         _ = c.ImGui_ColorEdit3("Sparse Color", @ptrCast(&state.sparse_color), c.ImGuiColorEditFlags_Float);
 
-        _ = c.ImGui_SliderFloat("Occlusion Multiplier", &state.occlusion_multiplier, 0.01, 2.0);
+        _ = c.ImGui_SliderFloat("Occlusion Multiplier", &state.occlusion_multiplier, 0.01, 4.0);
         _ = c.ImGui_SliderFloat("Occlusion Attenuation", &state.occlusion_attenuation, 0.1, 4.0);
+        _ = c.ImGui_SliderFloat("Depth Range", &state.depth_range, 0.1, 20.0);
+        _ = c.ImGui_SliderFloat("Depth Offset", &state.depth_offset, 0.1, 10.0);
+        _ = c.ImGui_SliderFloat("Depth Attenuation", &state.depth_attenuation, 0.01, 2.0);
 
         _ = c.ImGui_SliderFloat("Lambda", &state.lambda, 0.1, 25.0);
         _ = c.ImGui_Checkbox("Pause t (pause_t)", &state.pause_t);

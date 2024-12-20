@@ -20,6 +20,9 @@ struct Uniforms {
     float voxel_grid_compensation_perc;
     float occlusion_multiplier;
     float occlusion_attenuation;
+    float depth_range;
+    float depth_offset;
+    float depth_attenuation;
     int points;
     int iterations;
     int voxelization_points;
@@ -405,9 +408,9 @@ float voxelGridSample(ivec3 pos) {
             vec3 pos = screen[index].xyz;
             float dist = length(pos - ubo.eye.xyz);
             // https://www.desmos.com/calculator/ted75acgr5
-            dist = 1.0 - 1.0/(1.0 + exp(-pow(dist, ubo.occlusion_attenuation) * 6.5 / (5.0 * ubo.occlusion_multiplier) + 3.5));
+            dist = 1.0/(1.0 + exp(-pow(clamp(dist - ubo.depth_offset, 0.0, 30.0), ubo.depth_attenuation) * 6.5 / ubo.depth_range + 3.5));
 
-            f_color = vec4(mix(ubo.occlusion_color.xyz, ubo.sparse_color.xyz, dist), 1.0);
+            f_color = vec4(mix(ubo.sparse_color.xyz, ubo.occlusion_color.xyz, dist), 1.0);
         } else {
             f_color = ubo.background_color;
         }

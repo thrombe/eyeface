@@ -46,9 +46,9 @@ pub const AppState = struct {
     sparse_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#fbc8ccff"),
     occlusion_multiplier: f32 = 1.16,
     occlusion_attenuation: f32 = 0.55,
-    depth_range: f32 = 5.5,
+    depth_range: f32 = 5.35,
     depth_offset: f32 = 2.5,
-    depth_attenuation: f32 = 1.05,
+    depth_attenuation: f32 = 1.156,
 
     voxels: struct {
         // world space coords of center of the the voxel grid

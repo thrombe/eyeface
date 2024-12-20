@@ -418,7 +418,7 @@ float voxelGridSample(ivec3 pos) {
             }
             value = pow(max(value, 0.0)*ubo.occlusion_multiplier, ubo.occlusion_attenuation);
 
-            f_color = vec4(mix(ubo.occlusion_color.xyz, mix(ubo.sparse_color.xyz, ubo.occlusion_color.xyz, dist), value), 1.0);
+            f_color = vec4(mix(ubo.occlusion_color.xyz, ubo.sparse_color.xyz, mix(value, 0.0, dist)), 1.0);
         } else if (type == 1) {
             f_color = vec4(mix(ubo.sparse_color.xyz, ubo.occlusion_color.xyz, dist), 1.0);
         } else {

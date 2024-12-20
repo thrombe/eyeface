@@ -18,7 +18,7 @@ pub const AppState = struct {
     yaw: f32 = 0,
 
     speed: f32 = 1.0,
-    sensitivity: f32 = 1.0,
+    sensitivity: f32 = 0.2,
 
     frame: u32 = 0,
     time: f32 = 0,
@@ -41,11 +41,11 @@ pub const AppState = struct {
     voxelization_iterations: u32 = 4,
     reduction_points_x_64: u32 = 50000,
 
-    background_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#282828ff"),
-    occlusion_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#401a1aff"),
-    sparse_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#e0e7cdff"),
-    occlusion_multiplier: f32 = 1.1,
-    occlusion_attenuation: f32 = 0.93,
+    background_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#271212ff"),
+    occlusion_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#3a0e0eff"),
+    sparse_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#fbc8ccff"),
+    occlusion_multiplier: f32 = 1.16,
+    occlusion_attenuation: f32 = 0.55,
     depth_range: f32 = 5.5,
     depth_offset: f32 = 2.5,
     depth_attenuation: f32 = 1.05,

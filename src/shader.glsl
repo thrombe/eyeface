@@ -66,6 +66,13 @@ ivec3 to3D(int id, int side) {
     return pos;
 }
 
+struct PixelMeta {
+    vec3 grid_pos;
+    int pix_type;
+    vec3 visual_pos;
+    float pad;
+};
+
 #ifdef EYEFACE_COMPUTE
     layout(set = 0, binding = 1) buffer VertexInput {
         Vertex vertices[];
@@ -77,7 +84,7 @@ ivec3 to3D(int id, int side) {
         float occlusion[];
     };
     layout(set = 0, binding = 4) buffer ScreenBuffer {
-        vec4 screen[];
+        PixelMeta screen[];
     };
     layout(set = 0, binding = 5) buffer DepthBuffer {
         float depth[];
@@ -98,7 +105,7 @@ ivec3 to3D(int id, int side) {
         float occlusion[];
     };
     layout(set = 0, binding = 3) readonly buffer ScreenBuffer {
-        vec4 screen[];
+        PixelMeta screen[];
     };
     layout(set = 0, binding = 4) readonly buffer DepthBuffer {
         float depth[];
@@ -142,7 +149,10 @@ float voxelGridSample(ivec3 pos) {
         }
         if (id < ubo.width * ubo.height) {
             depth[id] = 1.1;
-            screen[id] = vec4(0.0);
+            screen[id].grid_pos = vec3(0.0);
+            screen[id].pix_type = 0;
+            screen[id].visual_pos = vec3(0.0);
+            screen[id].pad = 0.0;
         }
     }
 #endif // EYEFACE_CLEAR_BUFS
@@ -322,12 +332,12 @@ float voxelGridSample(ivec3 pos) {
             grid_pos /= voxel_grid_max.xyz - voxel_grid_min.xyz;
             grid_pos *= float(side);
             grid_pos += float(side)/2.0;
+            screen[si].grid_pos = grid_pos;
+            screen[si].visual_pos = visual_pos.xyz;
             if (inGrid(ivec3(grid_pos))) {
-                screen[si].xyz = grid_pos;
-                screen[si].w = 2.0;
+                screen[si].pix_type = 2;
             } else {
-                screen[si].xyz = visual_pos.xyz;
-                screen[si].w = 1.0;
+                screen[si].pix_type = 1;
             }
         }
 
@@ -379,9 +389,14 @@ float voxelGridSample(ivec3 pos) {
         ivec2 pos = ivec2(gl_FragCoord.xy);
         int index = to1D(pos, int(ubo.width));
 
-        float type = screen[index].w;
-        if (type > 1.5) {
-            vec3 pos = screen[index].xyz;
+        vec3 vpos = screen[index].visual_pos;
+        float dist = length(vpos - ubo.eye.xyz);
+        // https://www.desmos.com/calculator/ted75acgr5
+        dist = 1.0/(1.0 + exp(-pow(clamp(dist - ubo.depth_offset, 0.0, 30.0), ubo.depth_attenuation) * 6.5 / ubo.depth_range + 3.5));
+
+        int type = screen[index].pix_type;
+        if (type == 2) {
+            vec3 pos = screen[index].grid_pos;
             int side = ubo.voxel_grid_side;
             int index = to1D(ivec3(pos), side);
 
@@ -403,13 +418,8 @@ float voxelGridSample(ivec3 pos) {
             }
             value = pow(max(value, 0.0)*ubo.occlusion_multiplier, ubo.occlusion_attenuation);
 
-            f_color = vec4(mix(ubo.occlusion_color.xyz, ubo.sparse_color.xyz, value), 1.0);
-        } else if (type > 0.5) {
-            vec3 pos = screen[index].xyz;
-            float dist = length(pos - ubo.eye.xyz);
-            // https://www.desmos.com/calculator/ted75acgr5
-            dist = 1.0/(1.0 + exp(-pow(clamp(dist - ubo.depth_offset, 0.0, 30.0), ubo.depth_attenuation) * 6.5 / ubo.depth_range + 3.5));
-
+            f_color = vec4(mix(ubo.occlusion_color.xyz, mix(ubo.sparse_color.xyz, ubo.occlusion_color.xyz, dist), value), 1.0);
+        } else if (type == 1) {
             f_color = vec4(mix(ubo.sparse_color.xyz, ubo.occlusion_color.xyz, dist), 1.0);
         } else {
             f_color = ubo.background_color;

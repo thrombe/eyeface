@@ -295,7 +295,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
 
     const screen = blk: {
         const screen_buffer = try device.createBuffer(&.{
-            .size = @sizeOf(f32) * 4 * engine.window.extent.width * engine.window.extent.height,
+            .size = @sizeOf(f32) * 4 * 2 * engine.window.extent.width * engine.window.extent.height,
             .usage = .{
                 .storage_buffer_bit = true,
             },

@@ -285,6 +285,7 @@ float voxelGridSample(ivec3 pos) {
 
             if (i < ubo.voxelization_iterations && id < ubo.voxelization_points) {
                 int side = ubo.voxel_grid_side;
+                // TODO: this should be a matrix
                 vec3 grid_pos = pos.xyz;
                 grid_pos.xyz -= ubo.voxel_grid_center.xyz + (voxel_grid_min.xyz + voxel_grid_max.xyz)/2.0;
                 grid_pos /= voxel_grid_max.xyz - voxel_grid_min.xyz;
@@ -332,6 +333,7 @@ float voxelGridSample(ivec3 pos) {
             grid_pos /= voxel_grid_max.xyz - voxel_grid_min.xyz;
             grid_pos *= float(side);
             grid_pos += float(side)/2.0;
+            // TODO: maybe just store global pos and derive the rest
             screen[si].grid_pos = grid_pos;
             screen[si].visual_pos = visual_pos.xyz;
             if (inGrid(ivec3(grid_pos))) {

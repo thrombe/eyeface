@@ -36,16 +36,11 @@ vertex_buffer: vk.Buffer,
 depth_image: vk.Image,
 depth_buffer_memory: vk.DeviceMemory,
 depth_image_view: vk.ImageView,
-voxel_buffer: vk.Buffer,
-voxel_buffer_memory: vk.DeviceMemory,
-occlusion_buffer: vk.Buffer,
-occlusion_buffer_memory: vk.DeviceMemory,
-screen_buffer: vk.Buffer,
-screen_buffer_memory: vk.DeviceMemory,
-screen_depth_buffer: vk.Buffer,
-screen_depth_buffer_memory: vk.DeviceMemory,
-reduction_buffer: vk.Buffer,
-reduction_buffer_memory: vk.DeviceMemory,
+voxel_buffer: Buffer,
+occlusion_buffer: Buffer,
+screen_buffer: Buffer,
+screen_depth_buffer: Buffer,
+reduction_buffer: Buffer,
 descriptor_pool: vk.DescriptorPool,
 frag_descriptor_set_layout: vk.DescriptorSetLayout,
 frag_descriptor_set: vk.DescriptorSet,
@@ -247,117 +242,19 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         device.destroyImage(depth_image.image, null);
     }
 
-    const voxels = blk: {
-        const vol_size = app_state.voxels.side;
-        const voxel_buffer = try device.createBuffer(&.{
-            .size = @sizeOf(u32) * vol_size * vol_size * vol_size,
-            .usage = .{
-                .storage_buffer_bit = true,
-            },
-            .sharing_mode = .exclusive,
-        }, null);
-        errdefer device.destroyBuffer(voxel_buffer, null);
+    var voxels = try Buffer.new(ctx, .{ .size = @sizeOf(u32) * try std.math.powi(u32, app_state.voxels.side, 3) });
+    errdefer voxels.deinit(device);
+    var occlusion = try Buffer.new(ctx, .{ .size = @sizeOf(u32) * try std.math.powi(u32, app_state.voxels.side, 3) });
+    errdefer occlusion.deinit(device);
 
-        const mem_reqs = device.getBufferMemoryRequirements(voxel_buffer);
-        const voxel_memory = try ctx.allocate(mem_reqs, .{ .device_local_bit = true });
-        errdefer device.freeMemory(voxel_memory, null);
-        try device.bindBufferMemory(voxel_buffer, voxel_memory, 0);
+    var screen = try Buffer.new(ctx, .{ .size = @sizeOf(f32) * 4 * 2 * engine.window.extent.width * engine.window.extent.height });
+    errdefer screen.deinit(device);
 
-        const occlusion_buffer = try device.createBuffer(&.{
-            .size = @sizeOf(u32) * vol_size * vol_size * vol_size,
-            .usage = .{
-                .storage_buffer_bit = true,
-            },
-            .sharing_mode = .exclusive,
-        }, null);
-        errdefer device.destroyBuffer(occlusion_buffer, null);
+    var screen_depth = try Buffer.new(ctx, .{ .size = @sizeOf(f32) * engine.window.extent.width * engine.window.extent.height });
+    errdefer screen_depth.deinit(device);
 
-        const occlusion_memory = try ctx.allocate(
-            device.getBufferMemoryRequirements(occlusion_buffer),
-            .{ .device_local_bit = true },
-        );
-        errdefer device.freeMemory(occlusion_memory, null);
-        try device.bindBufferMemory(occlusion_buffer, occlusion_memory, 0);
-
-        break :blk .{
-            .voxel_buffer_memory = voxel_memory,
-            .voxel_buffer = voxel_buffer,
-            .occlusion_buffer_memory = occlusion_memory,
-            .occlusion_buffer = occlusion_buffer,
-        };
-    };
-    errdefer {
-        device.destroyBuffer(voxels.voxel_buffer, null);
-        device.freeMemory(voxels.voxel_buffer_memory, null);
-        device.destroyBuffer(voxels.occlusion_buffer, null);
-        device.freeMemory(voxels.occlusion_buffer_memory, null);
-    }
-
-    const screen = blk: {
-        const screen_buffer = try device.createBuffer(&.{
-            .size = @sizeOf(f32) * 4 * 2 * engine.window.extent.width * engine.window.extent.height,
-            .usage = .{
-                .storage_buffer_bit = true,
-            },
-            .sharing_mode = .exclusive,
-        }, null);
-        errdefer device.destroyBuffer(screen_buffer, null);
-
-        const mem_reqs = device.getBufferMemoryRequirements(screen_buffer);
-        const screen_memory = try ctx.allocate(mem_reqs, .{ .device_local_bit = true });
-        errdefer device.freeMemory(screen_memory, null);
-        try device.bindBufferMemory(screen_buffer, screen_memory, 0);
-
-        break :blk .{ .buffer = screen_buffer, .memory = screen_memory };
-    };
-    errdefer {
-        device.destroyBuffer(screen.buffer, null);
-        device.freeMemory(screen.memory, null);
-    }
-
-    const screen_depth = blk: {
-        const screen_buffer = try device.createBuffer(&.{
-            .size = @sizeOf(f32) * engine.window.extent.width * engine.window.extent.height,
-            .usage = .{
-                .storage_buffer_bit = true,
-            },
-            .sharing_mode = .exclusive,
-        }, null);
-        errdefer device.destroyBuffer(screen_buffer, null);
-
-        const mem_reqs = device.getBufferMemoryRequirements(screen_buffer);
-        const screen_memory = try ctx.allocate(mem_reqs, .{ .device_local_bit = true });
-        errdefer device.freeMemory(screen_memory, null);
-        try device.bindBufferMemory(screen_buffer, screen_memory, 0);
-
-        break :blk .{ .buffer = screen_buffer, .memory = screen_memory };
-    };
-    errdefer {
-        device.destroyBuffer(screen_depth.buffer, null);
-        device.freeMemory(screen_depth.memory, null);
-    }
-
-    const reduction = blk: {
-        const buffer = try device.createBuffer(&.{
-            .size = @sizeOf(f32) * 4 * 3 + @sizeOf(f32) * 3 * app_state.reduction_points_x_64 * 64,
-            .usage = .{
-                .storage_buffer_bit = true,
-            },
-            .sharing_mode = .exclusive,
-        }, null);
-        errdefer device.destroyBuffer(buffer, null);
-
-        const mem_reqs = device.getBufferMemoryRequirements(buffer);
-        const memory = try ctx.allocate(mem_reqs, .{ .device_local_bit = true });
-        errdefer device.freeMemory(memory, null);
-        try device.bindBufferMemory(buffer, memory, 0);
-
-        break :blk .{ .buffer = buffer, .memory = memory };
-    };
-    errdefer {
-        device.destroyBuffer(reduction.buffer, null);
-        device.freeMemory(reduction.memory, null);
-    }
+    var reduction = try Buffer.new(ctx, .{ .size = @sizeOf(f32) * 4 * 3 + @sizeOf(f32) * 3 * app_state.reduction_points_x_64 * 64 });
+    errdefer reduction.deinit(device);
 
     const frag_bindings = [_]vk.DescriptorSetLayoutBinding{
         .{
@@ -370,56 +267,11 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
                 .compute_bit = true,
             },
         },
-        .{
-            .binding = 1,
-            .descriptor_type = .storage_buffer,
-            .descriptor_count = 1,
-            .stage_flags = .{
-                .vertex_bit = true,
-                .fragment_bit = true,
-                .compute_bit = true,
-            },
-        },
-        .{
-            .binding = 2,
-            .descriptor_type = .storage_buffer,
-            .descriptor_count = 1,
-            .stage_flags = .{
-                .vertex_bit = true,
-                .fragment_bit = true,
-                .compute_bit = true,
-            },
-        },
-        .{
-            .binding = 3,
-            .descriptor_type = .storage_buffer,
-            .descriptor_count = 1,
-            .stage_flags = .{
-                .vertex_bit = true,
-                .fragment_bit = true,
-                .compute_bit = true,
-            },
-        },
-        .{
-            .binding = 4,
-            .descriptor_type = .storage_buffer,
-            .descriptor_count = 1,
-            .stage_flags = .{
-                .vertex_bit = true,
-                .fragment_bit = true,
-                .compute_bit = true,
-            },
-        },
-        .{
-            .binding = 5,
-            .descriptor_type = .storage_buffer,
-            .descriptor_count = 1,
-            .stage_flags = .{
-                .vertex_bit = true,
-                .fragment_bit = true,
-                .compute_bit = true,
-            },
-        },
+        voxels.layout_binding(1),
+        occlusion.layout_binding(2),
+        screen.layout_binding(3),
+        screen_depth.layout_binding(4),
+        reduction.layout_binding(5),
     };
     const frag_desc_set_layout = try device.createDescriptorSetLayout(&.{
         .flags = .{},
@@ -449,56 +301,11 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
                 .compute_bit = true,
             },
         },
-        .{
-            .binding = 2,
-            .descriptor_type = .storage_buffer,
-            .descriptor_count = 1,
-            .stage_flags = .{
-                .vertex_bit = true,
-                .fragment_bit = true,
-                .compute_bit = true,
-            },
-        },
-        .{
-            .binding = 3,
-            .descriptor_type = .storage_buffer,
-            .descriptor_count = 1,
-            .stage_flags = .{
-                .vertex_bit = true,
-                .fragment_bit = true,
-                .compute_bit = true,
-            },
-        },
-        .{
-            .binding = 4,
-            .descriptor_type = .storage_buffer,
-            .descriptor_count = 1,
-            .stage_flags = .{
-                .vertex_bit = true,
-                .fragment_bit = true,
-                .compute_bit = true,
-            },
-        },
-        .{
-            .binding = 5,
-            .descriptor_type = .storage_buffer,
-            .descriptor_count = 1,
-            .stage_flags = .{
-                .vertex_bit = true,
-                .fragment_bit = true,
-                .compute_bit = true,
-            },
-        },
-        .{
-            .binding = 6,
-            .descriptor_type = .storage_buffer,
-            .descriptor_count = 1,
-            .stage_flags = .{
-                .vertex_bit = true,
-                .fragment_bit = true,
-                .compute_bit = true,
-            },
-        },
+        voxels.layout_binding(2),
+        occlusion.layout_binding(3),
+        screen.layout_binding(4),
+        screen_depth.layout_binding(5),
+        reduction.layout_binding(6),
     };
     const compute_desc_set_layout = try device.createDescriptorSetLayout(&.{
         .flags = .{},
@@ -550,81 +357,11 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             .p_image_info = undefined,
             .p_texel_buffer_view = undefined,
         },
-        .{
-            .dst_set = frag_desc_set,
-            .dst_binding = 1,
-            .dst_array_element = 0,
-            .descriptor_count = 1,
-            .descriptor_type = .storage_buffer,
-            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
-                .buffer = voxels.voxel_buffer,
-                .offset = 0,
-                .range = vk.WHOLE_SIZE,
-            }},
-            // OOF: ??
-            .p_image_info = undefined,
-            .p_texel_buffer_view = undefined,
-        },
-        .{
-            .dst_set = frag_desc_set,
-            .dst_binding = 2,
-            .dst_array_element = 0,
-            .descriptor_count = 1,
-            .descriptor_type = .storage_buffer,
-            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
-                .buffer = voxels.occlusion_buffer,
-                .offset = 0,
-                .range = vk.WHOLE_SIZE,
-            }},
-            // OOF: ??
-            .p_image_info = undefined,
-            .p_texel_buffer_view = undefined,
-        },
-        .{
-            .dst_set = frag_desc_set,
-            .dst_binding = 3,
-            .dst_array_element = 0,
-            .descriptor_count = 1,
-            .descriptor_type = .storage_buffer,
-            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
-                .buffer = screen.buffer,
-                .offset = 0,
-                .range = vk.WHOLE_SIZE,
-            }},
-            // OOF: ??
-            .p_image_info = undefined,
-            .p_texel_buffer_view = undefined,
-        },
-        .{
-            .dst_set = frag_desc_set,
-            .dst_binding = 4,
-            .dst_array_element = 0,
-            .descriptor_count = 1,
-            .descriptor_type = .storage_buffer,
-            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
-                .buffer = screen_depth.buffer,
-                .offset = 0,
-                .range = vk.WHOLE_SIZE,
-            }},
-            // OOF: ??
-            .p_image_info = undefined,
-            .p_texel_buffer_view = undefined,
-        },
-        .{
-            .dst_set = frag_desc_set,
-            .dst_binding = 5,
-            .dst_array_element = 0,
-            .descriptor_count = 1,
-            .descriptor_type = .storage_buffer,
-            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
-                .buffer = reduction.buffer,
-                .offset = 0,
-                .range = vk.WHOLE_SIZE,
-            }},
-            // OOF: ??
-            .p_image_info = undefined,
-            .p_texel_buffer_view = undefined,
-        },
+        voxels.write_desc_set(1, frag_desc_set),
+        occlusion.write_desc_set(2, frag_desc_set),
+        screen.write_desc_set(3, frag_desc_set),
+        screen_depth.write_desc_set(4, frag_desc_set),
+        reduction.write_desc_set(5, frag_desc_set),
     };
     device.updateDescriptorSets(frag_desc_set_updates.len, &frag_desc_set_updates, 0, null);
     const compute_desc_set_updates = [_]vk.WriteDescriptorSet{
@@ -658,81 +395,11 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             .p_image_info = undefined,
             .p_texel_buffer_view = undefined,
         },
-        .{
-            .dst_set = compute_desc_set,
-            .dst_binding = 2,
-            .dst_array_element = 0,
-            .descriptor_count = 1,
-            .descriptor_type = .storage_buffer,
-            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
-                .buffer = voxels.voxel_buffer,
-                .offset = 0,
-                .range = vk.WHOLE_SIZE,
-            }},
-            // OOF: ??
-            .p_image_info = undefined,
-            .p_texel_buffer_view = undefined,
-        },
-        .{
-            .dst_set = compute_desc_set,
-            .dst_binding = 3,
-            .dst_array_element = 0,
-            .descriptor_count = 1,
-            .descriptor_type = .storage_buffer,
-            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
-                .buffer = voxels.occlusion_buffer,
-                .offset = 0,
-                .range = vk.WHOLE_SIZE,
-            }},
-            // OOF: ??
-            .p_image_info = undefined,
-            .p_texel_buffer_view = undefined,
-        },
-        .{
-            .dst_set = compute_desc_set,
-            .dst_binding = 4,
-            .dst_array_element = 0,
-            .descriptor_count = 1,
-            .descriptor_type = .storage_buffer,
-            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
-                .buffer = screen.buffer,
-                .offset = 0,
-                .range = vk.WHOLE_SIZE,
-            }},
-            // OOF: ??
-            .p_image_info = undefined,
-            .p_texel_buffer_view = undefined,
-        },
-        .{
-            .dst_set = compute_desc_set,
-            .dst_binding = 5,
-            .dst_array_element = 0,
-            .descriptor_count = 1,
-            .descriptor_type = .storage_buffer,
-            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
-                .buffer = screen_depth.buffer,
-                .offset = 0,
-                .range = vk.WHOLE_SIZE,
-            }},
-            // OOF: ??
-            .p_image_info = undefined,
-            .p_texel_buffer_view = undefined,
-        },
-        .{
-            .dst_set = compute_desc_set,
-            .dst_binding = 6,
-            .dst_array_element = 0,
-            .descriptor_count = 1,
-            .descriptor_type = .storage_buffer,
-            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
-                .buffer = reduction.buffer,
-                .offset = 0,
-                .range = vk.WHOLE_SIZE,
-            }},
-            // OOF: ??
-            .p_image_info = undefined,
-            .p_texel_buffer_view = undefined,
-        },
+        voxels.write_desc_set(2, compute_desc_set),
+        occlusion.write_desc_set(3, compute_desc_set),
+        screen.write_desc_set(4, compute_desc_set),
+        screen_depth.write_desc_set(5, compute_desc_set),
+        reduction.write_desc_set(6, compute_desc_set),
     };
     device.updateDescriptorSets(compute_desc_set_updates.len, &compute_desc_set_updates, 0, null);
 
@@ -1313,16 +980,11 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         .depth_image = depth_image.image,
         .depth_buffer_memory = depth_image.memory,
         .depth_image_view = depth_image.view,
-        .voxel_buffer = voxels.voxel_buffer,
-        .voxel_buffer_memory = voxels.voxel_buffer_memory,
-        .occlusion_buffer = voxels.occlusion_buffer,
-        .occlusion_buffer_memory = voxels.occlusion_buffer_memory,
-        .screen_buffer = screen.buffer,
-        .screen_buffer_memory = screen.memory,
-        .screen_depth_buffer = screen_depth.buffer,
-        .screen_depth_buffer_memory = screen_depth.memory,
-        .reduction_buffer = reduction.buffer,
-        .reduction_buffer_memory = reduction.memory,
+        .voxel_buffer = voxels,
+        .occlusion_buffer = occlusion,
+        .screen_buffer = screen,
+        .screen_depth_buffer = screen_depth,
+        .reduction_buffer = reduction,
         .descriptor_pool = desc_pool,
         .frag_descriptor_set_layout = frag_desc_set_layout,
         .frag_descriptor_set = frag_desc_set,
@@ -1364,23 +1026,13 @@ pub fn deinit(self: *@This(), device: *Device) void {
         device.destroyImage(self.depth_image, null);
     }
     defer {
-        device.destroyBuffer(self.voxel_buffer, null);
-        device.freeMemory(self.voxel_buffer_memory, null);
-        device.destroyBuffer(self.occlusion_buffer, null);
-        device.freeMemory(self.occlusion_buffer_memory, null);
+        self.voxel_buffer.deinit(device);
+        self.occlusion_buffer.deinit(device);
     }
-    defer {
-        device.destroyBuffer(self.screen_buffer, null);
-        device.freeMemory(self.screen_buffer_memory, null);
-    }
-    defer {
-        device.destroyBuffer(self.screen_depth_buffer, null);
-        device.freeMemory(self.screen_depth_buffer_memory, null);
-    }
-    defer {
-        device.destroyBuffer(self.reduction_buffer, null);
-        device.freeMemory(self.reduction_buffer_memory, null);
-    }
+    defer self.screen_buffer.deinit(device);
+
+    defer self.screen_depth_buffer.deinit(device);
+    defer self.reduction_buffer.deinit(device);
     defer device.destroyDescriptorSetLayout(self.frag_descriptor_set_layout, null);
     defer device.destroyDescriptorSetLayout(self.compute_descriptor_set_layout, null);
     defer device.destroyDescriptorPool(self.descriptor_pool, null);
@@ -1460,6 +1112,72 @@ pub fn copyBuffer(
     try device.queueSubmit(ctx.graphics_queue.handle, 1, @ptrCast(&si), .null_handle);
     try device.queueWaitIdle(ctx.graphics_queue.handle);
 }
+
+pub const Buffer = struct {
+    buffer: vk.Buffer,
+    memory: vk.DeviceMemory,
+    dbi: vk.DescriptorBufferInfo,
+
+    pub fn new(ctx: *Engine.VulkanContext, v: struct { size: u64 }) !@This() {
+        const device = &ctx.device;
+
+        const buffer = try device.createBuffer(&.{
+            .size = v.size,
+            .usage = .{
+                .storage_buffer_bit = true,
+            },
+            .sharing_mode = .exclusive,
+        }, null);
+        errdefer device.destroyBuffer(buffer, null);
+
+        const mem_reqs = device.getBufferMemoryRequirements(buffer);
+        const memory = try ctx.allocate(mem_reqs, .{ .device_local_bit = true });
+        errdefer device.freeMemory(memory, null);
+        try device.bindBufferMemory(buffer, memory, 0);
+
+        return .{
+            .buffer = buffer,
+            .memory = memory,
+            .dbi = .{
+                .buffer = buffer,
+                .offset = 0,
+                .range = vk.WHOLE_SIZE,
+            },
+        };
+    }
+
+    pub fn deinit(self: *@This(), device: *Device) void {
+        device.destroyBuffer(self.buffer, null);
+        device.freeMemory(self.memory, null);
+    }
+
+    pub fn layout_binding(_: *@This(), index: u32) vk.DescriptorSetLayoutBinding {
+        return .{
+            .binding = index,
+            .descriptor_type = .storage_buffer,
+            .descriptor_count = 1,
+            .stage_flags = .{
+                .vertex_bit = true,
+                .fragment_bit = true,
+                .compute_bit = true,
+            },
+        };
+    }
+
+    pub fn write_desc_set(self: *@This(), binding: u32, desc_set: vk.DescriptorSet) vk.WriteDescriptorSet {
+        return .{
+            .dst_set = desc_set,
+            .dst_binding = binding,
+            .dst_array_element = 0,
+            .descriptor_count = 1,
+            .descriptor_type = .storage_buffer,
+            .p_buffer_info = @ptrCast(&self.dbi),
+            // OOF: ??
+            .p_image_info = undefined,
+            .p_texel_buffer_view = undefined,
+        };
+    }
+};
 
 pub const Swapchain = struct {
     surface_format: vk.SurfaceFormatKHR,

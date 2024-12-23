@@ -12,6 +12,101 @@ const Device = Engine.VulkanContext.Api.Device;
 // TODO: don't depend on this
 const Uniforms = @import("renderer.zig").Uniforms;
 
+pub const RenderPass = struct {
+    pass: vk.RenderPass,
+
+    const Args = struct {
+        color_attachment_format: vk.Format,
+    };
+
+    pub fn new(device: *Device, v: Args) !@This() {
+        const subpass = vk.SubpassDescription{
+            .pipeline_bind_point = .graphics,
+            .color_attachment_count = 1,
+            .p_color_attachments = @ptrCast(&vk.AttachmentReference{
+                .attachment = 0,
+                .layout = .color_attachment_optimal,
+            }),
+            .p_depth_stencil_attachment = @ptrCast(&vk.AttachmentReference{
+                .attachment = 1,
+                .layout = .depth_stencil_attachment_optimal,
+            }),
+        };
+
+        const color_attachment = vk.AttachmentDescription{
+            .format = v.color_attachment_format,
+            .samples = .{ .@"1_bit" = true },
+            .load_op = .clear,
+            .store_op = .store,
+            .stencil_load_op = .dont_care,
+            .stencil_store_op = .dont_care,
+            .initial_layout = .undefined,
+            .final_layout = .color_attachment_optimal,
+        };
+
+        const depth_attachment = vk.AttachmentDescription{
+            .format = .d32_sfloat,
+            .samples = .{ .@"1_bit" = true },
+            .load_op = .clear,
+            .store_op = .dont_care,
+            .stencil_load_op = .dont_care,
+            .stencil_store_op = .dont_care,
+            .initial_layout = .undefined,
+            .final_layout = .depth_stencil_attachment_optimal,
+        };
+
+        const attachments = [_]vk.AttachmentDescription{ color_attachment, depth_attachment };
+
+        const deps = [_]vk.SubpassDependency{
+            .{
+                .src_subpass = vk.SUBPASS_EXTERNAL,
+                .dst_subpass = 0,
+                .src_stage_mask = .{
+                    .color_attachment_output_bit = true,
+                },
+                .dst_stage_mask = .{
+                    .color_attachment_output_bit = true,
+                },
+                // src_access_mask: AccessFlags = .{},
+                .dst_access_mask = .{
+                    .color_attachment_write_bit = true,
+                },
+                // dependency_flags: DependencyFlags = .{},
+            },
+            .{
+                .src_subpass = vk.SUBPASS_EXTERNAL,
+                .dst_subpass = 0,
+                .src_stage_mask = .{
+                    .early_fragment_tests_bit = true,
+                },
+                .dst_stage_mask = .{
+                    .early_fragment_tests_bit = true,
+                },
+                // src_access_mask: AccessFlags = .{},
+                .dst_access_mask = .{
+                    .depth_stencil_attachment_write_bit = true,
+                },
+                // dependency_flags: DependencyFlags = .{},
+            },
+        };
+
+        return .{
+            .pass = try device.createRenderPass(&.{
+                .attachment_count = @intCast(attachments.len),
+                .p_attachments = &attachments,
+                .subpass_count = 1,
+                .p_subpasses = @ptrCast(&subpass),
+                .dependency_count = @intCast(deps.len),
+                .p_dependencies = &deps,
+            }, null),
+        };
+    }
+
+    pub fn deinit(self: *@This(), device: *Device) void {
+        device.destroyRenderPass(self.pass, null);
+    }
+};
+
 pub const Image = struct {
     image: vk.Image,
     memory: vk.DeviceMemory,

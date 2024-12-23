@@ -25,6 +25,7 @@ const Swapchain = render_utils.Swapchain;
 const UniformBuffer = render_utils.UniformBuffer;
 const Buffer = render_utils.Buffer;
 const Image = render_utils.Image;
+const RenderPass = render_utils.RenderPass;
 
 const main = @import("main.zig");
 const allocator = main.allocator;
@@ -47,7 +48,7 @@ frag_descriptor_set_layout: vk.DescriptorSetLayout,
 frag_descriptor_set: vk.DescriptorSet,
 compute_descriptor_set_layout: vk.DescriptorSetLayout,
 compute_descriptor_set: vk.DescriptorSet,
-pass: vk.RenderPass,
+pass: RenderPass,
 compute_pipeline_layout: vk.PipelineLayout,
 compute_pipelines: []vk.Pipeline,
 pipeline_layout: vk.PipelineLayout,
@@ -302,87 +303,8 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     };
     defer allocator.free(frag_spv);
 
-    const pass = blk: {
-        const subpass = vk.SubpassDescription{
-            .pipeline_bind_point = .graphics,
-            .color_attachment_count = 1,
-            .p_color_attachments = @ptrCast(&vk.AttachmentReference{
-                .attachment = 0,
-                .layout = .color_attachment_optimal,
-            }),
-            .p_depth_stencil_attachment = @ptrCast(&vk.AttachmentReference{
-                .attachment = 1,
-                .layout = .depth_stencil_attachment_optimal,
-            }),
-        };
-
-        const color_attachment = vk.AttachmentDescription{
-            .format = swapchain.surface_format.format,
-            .samples = .{ .@"1_bit" = true },
-            .load_op = .clear,
-            .store_op = .store,
-            .stencil_load_op = .dont_care,
-            .stencil_store_op = .dont_care,
-            .initial_layout = .undefined,
-            .final_layout = .color_attachment_optimal,
-        };
-
-        const depth_attachment = vk.AttachmentDescription{
-            .format = .d32_sfloat,
-            .samples = .{ .@"1_bit" = true },
-            .load_op = .clear,
-            .store_op = .dont_care,
-            .stencil_load_op = .dont_care,
-            .stencil_store_op = .dont_care,
-            .initial_layout = .undefined,
-            .final_layout = .depth_stencil_attachment_optimal,
-        };
-
-        const attachments = [_]vk.AttachmentDescription{ color_attachment, depth_attachment };
-
-        const deps = [_]vk.SubpassDependency{
-            .{
-                .src_subpass = vk.SUBPASS_EXTERNAL,
-                .dst_subpass = 0,
-                .src_stage_mask = .{
-                    .color_attachment_output_bit = true,
-                },
-                .dst_stage_mask = .{
-                    .color_attachment_output_bit = true,
-                },
-                // src_access_mask: AccessFlags = .{},
-                .dst_access_mask = .{
-                    .color_attachment_write_bit = true,
-                },
-                // dependency_flags: DependencyFlags = .{},
-            },
-            .{
-                .src_subpass = vk.SUBPASS_EXTERNAL,
-                .dst_subpass = 0,
-                .src_stage_mask = .{
-                    .early_fragment_tests_bit = true,
-                },
-                .dst_stage_mask = .{
-                    .early_fragment_tests_bit = true,
-                },
-                // src_access_mask: AccessFlags = .{},
-                .dst_access_mask = .{
-                    .depth_stencil_attachment_write_bit = true,
-                },
-                // dependency_flags: DependencyFlags = .{},
-            },
-        };
-
-        break :blk try device.createRenderPass(&.{
-            .attachment_count = @intCast(attachments.len),
-            .p_attachments = &attachments,
-            .subpass_count = 1,
-            .p_subpasses = @ptrCast(&subpass),
-            .dependency_count = @intCast(deps.len),
-            .p_dependencies = &deps,
-        }, null);
-    };
-    errdefer device.destroyRenderPass(pass, null);
+    var pass = try RenderPass.new(device, .{ .color_attachment_format = swapchain.surface_format.format });
+    errdefer pass.deinit(device);
 
     const compute_pipeline_layout = try device.createPipelineLayout(&.{
         // .flags: PipelineLayoutCreateFlags = .{},
@@ -637,7 +559,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             .p_color_blend_state = &pcbsci,
             .p_dynamic_state = &pdsci,
             .layout = pipeline_layout,
-            .render_pass = pass,
+            .render_pass = pass.pass,
             .subpass = 0,
             .base_pipeline_handle = .null_handle,
             .base_pipeline_index = -1,
@@ -664,7 +586,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         for (framebuffers) |*fb| {
             const attachments = [_]vk.ImageView{ swapchain.swap_images[i_2].view, depth_image.view };
             fb.* = try device.createFramebuffer(&.{
-                .render_pass = pass,
+                .render_pass = pass.pass,
                 .attachment_count = attachments.len,
                 .p_attachments = &attachments,
                 .width = swapchain.extent.width,
@@ -788,7 +710,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             device.cmdSetScissor(cmdbuf, 0, 1, @ptrCast(&scissor));
 
             device.cmdBeginRenderPass(cmdbuf, &.{
-                .render_pass = pass,
+                .render_pass = pass.pass,
                 .framebuffer = framebuffer,
                 .render_area = .{
                     .offset = .{ .x = 0, .y = 0 },
@@ -865,7 +787,7 @@ pub fn deinit(self: *@This(), device: *Device) void {
     defer device.destroyDescriptorSetLayout(self.compute_descriptor_set_layout, null);
     defer device.destroyDescriptorPool(self.descriptor_pool, null);
 
-    defer device.destroyRenderPass(self.pass, null);
+    defer self.pass.deinit(device);
     defer device.destroyPipelineLayout(self.compute_pipeline_layout, null);
     defer {
         for (self.compute_pipelines) |p| {

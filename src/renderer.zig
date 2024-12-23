@@ -27,6 +27,7 @@ const Buffer = render_utils.Buffer;
 const Image = render_utils.Image;
 const RenderPass = render_utils.RenderPass;
 const GraphicsPipeline = render_utils.GraphicsPipeline;
+const ComputePipeline = render_utils.ComputePipeline;
 
 const main = @import("main.zig");
 const allocator = main.allocator;
@@ -50,8 +51,7 @@ frag_descriptor_set: vk.DescriptorSet,
 compute_descriptor_set_layout: vk.DescriptorSetLayout,
 compute_descriptor_set: vk.DescriptorSet,
 pass: RenderPass,
-compute_pipeline_layout: vk.PipelineLayout,
-compute_pipelines: []vk.Pipeline,
+compute_pipelines: []ComputePipeline,
 pipeline: GraphicsPipeline,
 // framebuffers are objects containing views of swapchain images
 framebuffers: []vk.Framebuffer,
@@ -306,12 +306,6 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     var pass = try RenderPass.new(device, .{ .color_attachment_format = swapchain.surface_format.format });
     errdefer pass.deinit(device);
 
-    const compute_pipeline_layout = try device.createPipelineLayout(&.{
-        // .flags: PipelineLayoutCreateFlags = .{},
-        .set_layout_count = 1,
-        .p_set_layouts = @ptrCast(&compute_desc_set_layout),
-    }, null);
-    errdefer device.destroyPipelineLayout(compute_pipeline_layout, null);
     const compute_pipelines = blk: {
         var pipelines = [_]struct {
             path: [:0]const u8,
@@ -320,7 +314,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             group_y: u32 = 1,
             group_z: u32 = 1,
             reduction_factor: ?u32 = null,
-            pipeline: vk.Pipeline = undefined,
+            pipeline: ComputePipeline = undefined,
         }{
             .{
                 .path = "./src/shader.glsl",
@@ -387,50 +381,23 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             };
             defer allocator.free(compute_spv);
 
-            const compute = try device.createShaderModule(&.{
-                .code_size = compute_spv.len * @sizeOf(u32),
-                .p_code = @ptrCast(compute_spv.ptr),
-            }, null);
-            defer device.destroyShaderModule(compute, null);
-
-            const cpci = vk.ComputePipelineCreateInfo{
-                .stage = .{
-                    .stage = .{
-                        .compute_bit = true,
-                    },
-                    .module = compute,
-                    .p_name = "main",
-                },
-                .layout = compute_pipeline_layout,
-                .base_pipeline_index = undefined,
-            };
-
-            _ = try device.createComputePipelines(.null_handle, 1, @ptrCast(&cpci), null, @ptrCast(&pipelines[i].pipeline));
+            pipelines[i].pipeline = try ComputePipeline.new(device, .{
+                .shader = compute_spv,
+                .desc_set_layouts = &[_]vk.DescriptorSetLayout{compute_desc_set_layout},
+            });
         }
 
         break :blk pipelines;
     };
     errdefer {
         for (compute_pipelines) |p| {
-            device.destroyPipeline(p.pipeline, null);
+            p.pipeline.deinit(device);
         }
     }
 
-    const vert = try device.createShaderModule(&.{
-        .code_size = vert_spv.len * @sizeOf(u32),
-        .p_code = @ptrCast(vert_spv.ptr),
-    }, null);
-    defer device.destroyShaderModule(vert, null);
-
-    const frag = try device.createShaderModule(&.{
-        .code_size = frag_spv.len * @sizeOf(u32),
-        .p_code = @ptrCast(frag_spv.ptr),
-    }, null);
-    defer device.destroyShaderModule(frag, null);
-
     var pipeline = try GraphicsPipeline.new(device, .{
-        .vert = vert,
-        .frag = frag,
+        .vert = vert_spv,
+        .frag = frag_spv,
         .pass = pass.pass,
         .desc_set_layouts = &[_]vk.DescriptorSetLayout{frag_desc_set_layout},
     });
@@ -504,8 +471,8 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             try device.beginCommandBuffer(cmdbuf, &.{});
 
             for (compute_pipelines) |p| {
-                device.cmdBindPipeline(cmdbuf, .compute, p.pipeline);
-                device.cmdBindDescriptorSets(cmdbuf, .compute, compute_pipeline_layout, 0, 1, @ptrCast(&compute_desc_set), 0, null);
+                device.cmdBindPipeline(cmdbuf, .compute, p.pipeline.pipeline);
+                device.cmdBindDescriptorSets(cmdbuf, .compute, p.pipeline.layout, 0, 1, @ptrCast(&compute_desc_set), 0, null);
 
                 var x = p.group_x;
                 while (x >= 1) {
@@ -610,9 +577,8 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         .compute_descriptor_set_layout = compute_desc_set_layout,
         .compute_descriptor_set = compute_desc_set,
         .pass = pass,
-        .compute_pipeline_layout = compute_pipeline_layout,
         .compute_pipelines = blk: {
-            const pipelines = try allocator.alloc(vk.Pipeline, compute_pipelines.len);
+            const pipelines = try allocator.alloc(ComputePipeline, compute_pipelines.len);
             for (compute_pipelines, 0..) |p, i| {
                 pipelines[i] = p.pipeline;
             }
@@ -646,10 +612,9 @@ pub fn deinit(self: *@This(), device: *Device) void {
     defer device.destroyDescriptorPool(self.descriptor_pool, null);
 
     defer self.pass.deinit(device);
-    defer device.destroyPipelineLayout(self.compute_pipeline_layout, null);
     defer {
         for (self.compute_pipelines) |p| {
-            device.destroyPipeline(p, null);
+            p.deinit(device);
         }
         allocator.free(self.compute_pipelines);
     }

@@ -12,13 +12,63 @@ const Device = Engine.VulkanContext.Api.Device;
 // TODO: don't depend on this
 const Uniforms = @import("renderer.zig").Uniforms;
 
+pub const ComputePipeline = struct {
+    pipeline: vk.Pipeline,
+    layout: vk.PipelineLayout,
+
+    const Args = struct {
+        shader: []u32,
+        desc_set_layouts: []const vk.DescriptorSetLayout,
+    };
+
+    pub fn new(device: *Device, v: Args) !@This() {
+        const layout = try device.createPipelineLayout(&.{
+            // .flags: PipelineLayoutCreateFlags = .{},
+            .set_layout_count = @intCast(v.desc_set_layouts.len),
+            .p_set_layouts = v.desc_set_layouts.ptr,
+        }, null);
+        errdefer device.destroyPipelineLayout(layout, null);
+
+        const compute = try device.createShaderModule(&.{
+            .code_size = v.shader.len * @sizeOf(u32),
+            .p_code = @ptrCast(v.shader.ptr),
+        }, null);
+        defer device.destroyShaderModule(compute, null);
+
+        const cpci = vk.ComputePipelineCreateInfo{
+            .stage = .{
+                .stage = .{
+                    .compute_bit = true,
+                },
+                .module = compute,
+                .p_name = "main",
+            },
+            .layout = layout,
+            .base_pipeline_index = undefined,
+        };
+
+        var pipeline: vk.Pipeline = undefined;
+        _ = try device.createComputePipelines(.null_handle, 1, @ptrCast(&cpci), null, @ptrCast(&pipeline));
+
+        return .{
+            .pipeline = pipeline,
+            .layout = layout,
+        };
+    }
+
+    pub fn deinit(self: *const @This(), device: *Device) void {
+        device.destroyPipeline(self.pipeline, null);
+        device.destroyPipelineLayout(self.layout, null);
+    }
+};
+
 pub const GraphicsPipeline = struct {
     pipeline: vk.Pipeline,
     layout: vk.PipelineLayout,
 
     const Args = struct {
-        vert: vk.ShaderModule,
-        frag: vk.ShaderModule,
+        vert: []u32,
+        frag: []u32,
         pass: vk.RenderPass,
         desc_set_layouts: []const vk.DescriptorSetLayout,
     };
@@ -33,15 +83,27 @@ pub const GraphicsPipeline = struct {
         }, null);
         errdefer device.destroyPipelineLayout(layout, null);
 
+        const vert = try device.createShaderModule(&.{
+            .code_size = v.vert.len * @sizeOf(u32),
+            .p_code = @ptrCast(v.vert.ptr),
+        }, null);
+        defer device.destroyShaderModule(vert, null);
+
+        const frag = try device.createShaderModule(&.{
+            .code_size = v.frag.len * @sizeOf(u32),
+            .p_code = @ptrCast(v.frag.ptr),
+        }, null);
+        defer device.destroyShaderModule(frag, null);
+
         const pssci = [_]vk.PipelineShaderStageCreateInfo{
             .{
                 .stage = .{ .vertex_bit = true },
-                .module = v.vert,
+                .module = vert,
                 .p_name = "main",
             },
             .{
                 .stage = .{ .fragment_bit = true },
-                .module = v.frag,
+                .module = frag,
                 .p_name = "main",
             },
         };

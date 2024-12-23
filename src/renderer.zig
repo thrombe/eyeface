@@ -32,8 +32,7 @@ const Renderer = @This();
 
 swapchain: Swapchain,
 uniforms: UniformBuffer(Uniforms),
-vertex_buffer_memory: vk.DeviceMemory,
-vertex_buffer: vk.Buffer,
+vertex_buffer: Buffer,
 // - [Depth buffering - Vulkan Tutorial](https://vulkan-tutorial.com/Depth_buffering)
 // - [Setting up depth buffer - Vulkan Guide](https://vkguide.dev/docs/chapter-3/depth_buffer/)
 depth_image: vk.Image,
@@ -130,47 +129,13 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     }, null);
     errdefer device.destroyCommandPool(pool, null);
 
-    const vertex_buffer = blk: {
-        const buffer = try device.createBuffer(&.{
-            .size = @sizeOf(Vertex) * app_state.points_x_64 * 64,
-            .usage = .{
-                .transfer_dst_bit = true,
-                .vertex_buffer_bit = true,
-                .storage_buffer_bit = true,
-            },
-            .sharing_mode = .exclusive,
-        }, null);
-        errdefer device.destroyBuffer(buffer, null);
-        const mem_reqs = device.getBufferMemoryRequirements(buffer);
-        const memory = try ctx.allocate(mem_reqs, .{ .device_local_bit = true });
-        errdefer device.freeMemory(memory, null);
-        try device.bindBufferMemory(buffer, memory, 0);
-
-        const staging_buffer = try device.createBuffer(&.{
-            .size = @sizeOf(Vertex) * app_state.points_x_64 * 64,
-            .usage = .{ .transfer_src_bit = true },
-            .sharing_mode = .exclusive,
-        }, null);
-        defer device.destroyBuffer(staging_buffer, null);
-        const staging_mem_reqs = device.getBufferMemoryRequirements(staging_buffer);
-        const staging_memory = try ctx.allocate(staging_mem_reqs, .{ .host_visible_bit = true, .host_coherent_bit = true });
-        defer device.freeMemory(staging_memory, null);
-        try device.bindBufferMemory(staging_buffer, staging_memory, 0);
-
-        {
-            const data = try device.mapMemory(staging_memory, 0, vk.WHOLE_SIZE, .{});
-            defer device.unmapMemory(staging_memory);
-
-            const gpu_vertices: [*]Vertex = @ptrCast(@alignCast(data));
-            @memset(gpu_vertices[0 .. app_state.points_x_64 * 64], .{ .pos = .{ 0, 0, 0, 1 } });
-        }
-
-        try render_utils.copyBuffer(ctx, device, pool, buffer, staging_buffer, @sizeOf(Vertex) * app_state.points_x_64 * 64);
-
-        break :blk .{ .buffer = buffer, .memory = memory };
-    };
-    errdefer device.destroyBuffer(vertex_buffer.buffer, null);
-    errdefer device.freeMemory(vertex_buffer.memory, null);
+    var vertex_buffer = try Buffer.new_initialized(ctx, .{
+        .size = @sizeOf(Vertex) * app_state.points_x_64 * 64,
+        .usage = .{
+            .vertex_buffer_bit = true,
+        },
+    }, Vertex{ .pos = .{ 0, 0, 0, 1 } }, pool);
+    errdefer vertex_buffer.deinit(device);
 
     // apparently you don't need to create more than 1 depth buffer even if you have many
     // framebuffers
@@ -263,16 +228,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
 
     const compute_bindings = [_]vk.DescriptorSetLayoutBinding{
         uniforms.layout_binding(0),
-        .{
-            .binding = 1,
-            .descriptor_type = .storage_buffer,
-            .descriptor_count = 1,
-            .stage_flags = .{
-                .vertex_bit = true,
-                .fragment_bit = true,
-                .compute_bit = true,
-            },
-        },
+        vertex_buffer.layout_binding(1),
         voxels.layout_binding(2),
         occlusion.layout_binding(3),
         screen.layout_binding(4),
@@ -324,21 +280,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     device.updateDescriptorSets(frag_desc_set_updates.len, &frag_desc_set_updates, 0, null);
     const compute_desc_set_updates = [_]vk.WriteDescriptorSet{
         uniforms.write_desc_set(0, compute_desc_set),
-        .{
-            .dst_set = compute_desc_set,
-            .dst_binding = 1,
-            .dst_array_element = 0,
-            .descriptor_count = 1,
-            .descriptor_type = .storage_buffer,
-            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
-                .buffer = vertex_buffer.buffer,
-                .offset = 0,
-                .range = vk.WHOLE_SIZE,
-            }},
-            // OOF: ??
-            .p_image_info = undefined,
-            .p_texel_buffer_view = undefined,
-        },
+        vertex_buffer.write_desc_set(1, compute_desc_set),
         voxels.write_desc_set(2, compute_desc_set),
         occlusion.write_desc_set(3, compute_desc_set),
         screen.write_desc_set(4, compute_desc_set),
@@ -915,8 +857,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     return .{
         .swapchain = swapchain,
         .uniforms = uniforms,
-        .vertex_buffer_memory = vertex_buffer.memory,
-        .vertex_buffer = vertex_buffer.buffer,
+        .vertex_buffer = vertex_buffer,
         .depth_image = depth_image.image,
         .depth_buffer_memory = depth_image.memory,
         .depth_image_view = depth_image.view,
@@ -953,10 +894,7 @@ pub fn deinit(self: *@This(), device: *Device) void {
     defer self.swapchain.deinit(device);
 
     defer self.uniforms.deinit(device);
-    defer {
-        device.destroyBuffer(self.vertex_buffer, null);
-        device.freeMemory(self.vertex_buffer_memory, null);
-    }
+    defer self.vertex_buffer.deinit(device);
     defer {
         device.destroyImageView(self.depth_image_view, null);
         device.freeMemory(self.depth_buffer_memory, null);

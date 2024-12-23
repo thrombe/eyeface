@@ -97,14 +97,48 @@ pub const Buffer = struct {
     memory: vk.DeviceMemory,
     dbi: vk.DescriptorBufferInfo,
 
-    pub fn new(ctx: *Engine.VulkanContext, v: struct { size: u64 }) !@This() {
+    const Args = struct { size: u64, usage: vk.BufferUsageFlags = .{} };
+
+    pub fn new_initialized(ctx: *Engine.VulkanContext, v: Args, val: anytype, pool: vk.CommandPool) !@This() {
+        const this = try @This().new(
+            ctx,
+            .{ .size = v.size, .usage = v.usage.merge(.{
+                .transfer_dst_bit = true,
+            }) },
+        );
+
+        const staging_buffer = try ctx.device.createBuffer(&.{
+            .size = v.size,
+            .usage = .{ .transfer_src_bit = true },
+            .sharing_mode = .exclusive,
+        }, null);
+        defer ctx.device.destroyBuffer(staging_buffer, null);
+        const staging_mem_reqs = ctx.device.getBufferMemoryRequirements(staging_buffer);
+        const staging_memory = try ctx.allocate(staging_mem_reqs, .{ .host_visible_bit = true, .host_coherent_bit = true });
+        defer ctx.device.freeMemory(staging_memory, null);
+        try ctx.device.bindBufferMemory(staging_buffer, staging_memory, 0);
+
+        {
+            const data = try ctx.device.mapMemory(staging_memory, 0, vk.WHOLE_SIZE, .{});
+            defer ctx.device.unmapMemory(staging_memory);
+
+            const gpu_vertices: [*]@TypeOf(val) = @ptrCast(@alignCast(data));
+            @memset(gpu_vertices[0 .. v.size / @as(u64, @sizeOf(@TypeOf(val)))], val);
+        }
+
+        try copyBuffer(ctx, &ctx.device, pool, this.buffer, staging_buffer, v.size);
+
+        return this;
+    }
+
+    pub fn new(ctx: *Engine.VulkanContext, v: Args) !@This() {
         const device = &ctx.device;
 
         const buffer = try device.createBuffer(&.{
             .size = v.size,
-            .usage = .{
+            .usage = (vk.BufferUsageFlags{
                 .storage_buffer_bit = true,
-            },
+            }).merge(v.usage),
             .sharing_mode = .exclusive,
         }, null);
         errdefer device.destroyBuffer(buffer, null);

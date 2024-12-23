@@ -12,6 +12,9 @@ const math = @import("math.zig");
 const Vec4 = math.Vec4;
 const Mat4x4 = math.Mat4x4;
 
+const render_utils = @import("render_utils.zig");
+const Swapchain = render_utils.Swapchain;
+
 const Renderer = @import("renderer.zig");
 
 pub const GuiEngine = struct {
@@ -77,7 +80,7 @@ pub const GuiEngine = struct {
 
         framebuffers: []vk.Framebuffer,
 
-        pub fn init(engine: *Engine, swapchain: *Renderer.Swapchain) !@This() {
+        pub fn init(engine: *Engine, swapchain: *Swapchain) !@This() {
             const device = &engine.graphics.device;
 
             const cmd_pool = try device.createCommandPool(&.{

@@ -26,6 +26,7 @@ const UniformBuffer = render_utils.UniformBuffer;
 const Buffer = render_utils.Buffer;
 const Image = render_utils.Image;
 const RenderPass = render_utils.RenderPass;
+const GraphicsPipeline = render_utils.GraphicsPipeline;
 
 const main = @import("main.zig");
 const allocator = main.allocator;
@@ -51,8 +52,7 @@ compute_descriptor_set: vk.DescriptorSet,
 pass: RenderPass,
 compute_pipeline_layout: vk.PipelineLayout,
 compute_pipelines: []vk.Pipeline,
-pipeline_layout: vk.PipelineLayout,
-pipeline: vk.Pipeline,
+pipeline: GraphicsPipeline,
 // framebuffers are objects containing views of swapchain images
 framebuffers: []vk.Framebuffer,
 command_pool: vk.CommandPool,
@@ -416,166 +416,25 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         }
     }
 
-    const pipeline_layout = try device.createPipelineLayout(&.{
-        .flags = .{},
-        .set_layout_count = 1,
-        .p_set_layouts = @ptrCast(&frag_desc_set_layout),
-        .push_constant_range_count = 0,
-        .p_push_constant_ranges = undefined,
+    const vert = try device.createShaderModule(&.{
+        .code_size = vert_spv.len * @sizeOf(u32),
+        .p_code = @ptrCast(vert_spv.ptr),
     }, null);
-    errdefer device.destroyPipelineLayout(pipeline_layout, null);
+    defer device.destroyShaderModule(vert, null);
 
-    const pipeline = blk: {
-        const vert = try device.createShaderModule(&.{
-            .code_size = vert_spv.len * @sizeOf(u32),
-            .p_code = @ptrCast(vert_spv.ptr),
-        }, null);
-        defer device.destroyShaderModule(vert, null);
+    const frag = try device.createShaderModule(&.{
+        .code_size = frag_spv.len * @sizeOf(u32),
+        .p_code = @ptrCast(frag_spv.ptr),
+    }, null);
+    defer device.destroyShaderModule(frag, null);
 
-        const frag = try device.createShaderModule(&.{
-            .code_size = frag_spv.len * @sizeOf(u32),
-            .p_code = @ptrCast(frag_spv.ptr),
-        }, null);
-        defer device.destroyShaderModule(frag, null);
-
-        const pssci = [_]vk.PipelineShaderStageCreateInfo{
-            .{
-                .stage = .{ .vertex_bit = true },
-                .module = vert,
-                .p_name = "main",
-            },
-            .{
-                .stage = .{ .fragment_bit = true },
-                .module = frag,
-                .p_name = "main",
-            },
-        };
-
-        const pvisci = vk.PipelineVertexInputStateCreateInfo{
-            // .vertex_binding_description_count = 0,
-            // .p_vertex_binding_descriptions = @ptrCast(&Vertex.binding_description),
-            // .vertex_attribute_description_count = Vertex.attribute_description.len,
-            // .p_vertex_attribute_descriptions = &Vertex.attribute_description,
-        };
-
-        const piasci = vk.PipelineInputAssemblyStateCreateInfo{
-            .topology = .triangle_list,
-            .primitive_restart_enable = vk.FALSE,
-        };
-
-        const pvsci = vk.PipelineViewportStateCreateInfo{
-            .viewport_count = 1,
-            .p_viewports = undefined, // set in createCommandBuffers with cmdSetViewport
-            .scissor_count = 1,
-            .p_scissors = undefined, // set in createCommandBuffers with cmdSetScissor
-        };
-
-        const prsci = vk.PipelineRasterizationStateCreateInfo{
-            .depth_clamp_enable = vk.FALSE,
-            .rasterizer_discard_enable = vk.FALSE,
-            .polygon_mode = .fill,
-            .cull_mode = .{ .back_bit = false },
-            .front_face = .clockwise,
-            .depth_bias_enable = vk.FALSE,
-            .depth_bias_constant_factor = 0,
-            .depth_bias_clamp = 0,
-            .depth_bias_slope_factor = 0,
-            .line_width = 1,
-        };
-
-        const pmsci = vk.PipelineMultisampleStateCreateInfo{
-            .rasterization_samples = .{ .@"1_bit" = true },
-            .sample_shading_enable = vk.FALSE,
-            .min_sample_shading = 1,
-            .alpha_to_coverage_enable = vk.FALSE,
-            .alpha_to_one_enable = vk.FALSE,
-        };
-
-        const pcbas = vk.PipelineColorBlendAttachmentState{
-            .blend_enable = vk.FALSE,
-            .src_color_blend_factor = .one,
-            .dst_color_blend_factor = .zero,
-            .color_blend_op = .add,
-            .src_alpha_blend_factor = .one,
-            .dst_alpha_blend_factor = .zero,
-            .alpha_blend_op = .add,
-            .color_write_mask = .{ .r_bit = true, .g_bit = true, .b_bit = true, .a_bit = true },
-        };
-
-        const pcbsci = vk.PipelineColorBlendStateCreateInfo{
-            .logic_op_enable = vk.FALSE,
-            .logic_op = .copy,
-            .attachment_count = 1,
-            .p_attachments = @ptrCast(&pcbas),
-            .blend_constants = [_]f32{ 0, 0, 0, 0 },
-        };
-
-        const dynstate = [_]vk.DynamicState{ .viewport, .scissor };
-        const pdsci = vk.PipelineDynamicStateCreateInfo{
-            .flags = .{},
-            .dynamic_state_count = dynstate.len,
-            .p_dynamic_states = &dynstate,
-        };
-
-        const depth_stencil_info = vk.PipelineDepthStencilStateCreateInfo{
-            .depth_test_enable = vk.TRUE,
-            .depth_write_enable = vk.TRUE,
-            .depth_compare_op = .less,
-            .depth_bounds_test_enable = vk.FALSE,
-            .stencil_test_enable = vk.FALSE,
-            .front = .{
-                .fail_op = .keep,
-                .pass_op = .replace,
-                .depth_fail_op = .keep,
-                .compare_op = .always,
-                .compare_mask = 0xFF,
-                .write_mask = 0xFF,
-                .reference = 1,
-            },
-            .back = .{
-                .fail_op = .keep,
-                .pass_op = .replace,
-                .depth_fail_op = .keep,
-                .compare_op = .always,
-                .compare_mask = 0xFF,
-                .write_mask = 0xFF,
-                .reference = 1,
-            },
-            .min_depth_bounds = 0.0,
-            .max_depth_bounds = 1.0,
-        };
-
-        const gpci = vk.GraphicsPipelineCreateInfo{
-            .flags = .{},
-            .stage_count = 2,
-            .p_stages = &pssci,
-            .p_vertex_input_state = &pvisci,
-            .p_input_assembly_state = &piasci,
-            .p_tessellation_state = null,
-            .p_viewport_state = &pvsci,
-            .p_rasterization_state = &prsci,
-            .p_multisample_state = &pmsci,
-            .p_depth_stencil_state = &depth_stencil_info,
-            .p_color_blend_state = &pcbsci,
-            .p_dynamic_state = &pdsci,
-            .layout = pipeline_layout,
-            .render_pass = pass.pass,
-            .subpass = 0,
-            .base_pipeline_handle = .null_handle,
-            .base_pipeline_index = -1,
-        };
-
-        var pipeline: vk.Pipeline = undefined;
-        _ = try device.createGraphicsPipelines(
-            .null_handle,
-            1,
-            @ptrCast(&gpci),
-            null,
-            @ptrCast(&pipeline),
-        );
-        break :blk pipeline;
-    };
-    errdefer device.destroyPipeline(pipeline, null);
+    var pipeline = try GraphicsPipeline.new(device, .{
+        .vert = vert,
+        .frag = frag,
+        .pass = pass.pass,
+        .desc_set_layouts = &[_]vk.DescriptorSetLayout{frag_desc_set_layout},
+    });
+    errdefer pipeline.deinit(device);
 
     const framebuffers = blk: {
         const framebuffers = try allocator.alloc(vk.Framebuffer, swapchain.swap_images.len);
@@ -720,8 +579,8 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
                 .p_clear_values = &clear,
             }, .@"inline");
 
-            device.cmdBindPipeline(cmdbuf, .graphics, pipeline);
-            device.cmdBindDescriptorSets(cmdbuf, .graphics, pipeline_layout, 0, 1, @ptrCast(&frag_desc_set), 0, null);
+            device.cmdBindPipeline(cmdbuf, .graphics, pipeline.pipeline);
+            device.cmdBindDescriptorSets(cmdbuf, .graphics, pipeline.layout, 0, 1, @ptrCast(&frag_desc_set), 0, null);
             device.cmdDraw(cmdbuf, 6, 1, 0, 0);
 
             device.cmdEndRenderPass(cmdbuf);
@@ -759,7 +618,6 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             }
             break :blk pipelines;
         },
-        .pipeline_layout = pipeline_layout,
         .pipeline = pipeline,
         .framebuffers = framebuffers,
         .command_pool = pool,
@@ -795,8 +653,7 @@ pub fn deinit(self: *@This(), device: *Device) void {
         }
         allocator.free(self.compute_pipelines);
     }
-    defer device.destroyPipelineLayout(self.pipeline_layout, null);
-    defer device.destroyPipeline(self.pipeline, null);
+    defer self.pipeline.deinit(device);
 
     defer {
         for (self.framebuffers) |fb| device.destroyFramebuffer(fb, null);

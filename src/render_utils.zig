@@ -12,6 +12,171 @@ const Device = Engine.VulkanContext.Api.Device;
 // TODO: don't depend on this
 const Uniforms = @import("renderer.zig").Uniforms;
 
+pub const GraphicsPipeline = struct {
+    pipeline: vk.Pipeline,
+    layout: vk.PipelineLayout,
+
+    const Args = struct {
+        vert: vk.ShaderModule,
+        frag: vk.ShaderModule,
+        pass: vk.RenderPass,
+        desc_set_layouts: []const vk.DescriptorSetLayout,
+    };
+
+    pub fn new(device: *Device, v: Args) !@This() {
+        const layout = try device.createPipelineLayout(&.{
+            .flags = .{},
+            .set_layout_count = @intCast(v.desc_set_layouts.len),
+            .p_set_layouts = v.desc_set_layouts.ptr,
+            .push_constant_range_count = 0,
+            .p_push_constant_ranges = undefined,
+        }, null);
+        errdefer device.destroyPipelineLayout(layout, null);
+
+        const pssci = [_]vk.PipelineShaderStageCreateInfo{
+            .{
+                .stage = .{ .vertex_bit = true },
+                .module = v.vert,
+                .p_name = "main",
+            },
+            .{
+                .stage = .{ .fragment_bit = true },
+                .module = v.frag,
+                .p_name = "main",
+            },
+        };
+
+        const pvisci = vk.PipelineVertexInputStateCreateInfo{
+            // .vertex_binding_description_count = 0,
+            // .p_vertex_binding_descriptions = @ptrCast(&Vertex.binding_description),
+            // .vertex_attribute_description_count = Vertex.attribute_description.len,
+            // .p_vertex_attribute_descriptions = &Vertex.attribute_description,
+        };
+
+        const piasci = vk.PipelineInputAssemblyStateCreateInfo{
+            .topology = .triangle_list,
+            .primitive_restart_enable = vk.FALSE,
+        };
+
+        const pvsci = vk.PipelineViewportStateCreateInfo{
+            .viewport_count = 1,
+            .p_viewports = undefined, // set in createCommandBuffers with cmdSetViewport
+            .scissor_count = 1,
+            .p_scissors = undefined, // set in createCommandBuffers with cmdSetScissor
+        };
+
+        const prsci = vk.PipelineRasterizationStateCreateInfo{
+            .depth_clamp_enable = vk.FALSE,
+            .rasterizer_discard_enable = vk.FALSE,
+            .polygon_mode = .fill,
+            .cull_mode = .{ .back_bit = false },
+            .front_face = .clockwise,
+            .depth_bias_enable = vk.FALSE,
+            .depth_bias_constant_factor = 0,
+            .depth_bias_clamp = 0,
+            .depth_bias_slope_factor = 0,
+            .line_width = 1,
+        };
+
+        const pmsci = vk.PipelineMultisampleStateCreateInfo{
+            .rasterization_samples = .{ .@"1_bit" = true },
+            .sample_shading_enable = vk.FALSE,
+            .min_sample_shading = 1,
+            .alpha_to_coverage_enable = vk.FALSE,
+            .alpha_to_one_enable = vk.FALSE,
+        };
+
+        const pcbas = vk.PipelineColorBlendAttachmentState{
+            .blend_enable = vk.FALSE,
+            .src_color_blend_factor = .one,
+            .dst_color_blend_factor = .zero,
+            .color_blend_op = .add,
+            .src_alpha_blend_factor = .one,
+            .dst_alpha_blend_factor = .zero,
+            .alpha_blend_op = .add,
+            .color_write_mask = .{ .r_bit = true, .g_bit = true, .b_bit = true, .a_bit = true },
+        };
+
+        const pcbsci = vk.PipelineColorBlendStateCreateInfo{
+            .logic_op_enable = vk.FALSE,
+            .logic_op = .copy,
+            .attachment_count = 1,
+            .p_attachments = @ptrCast(&pcbas),
+            .blend_constants = [_]f32{ 0, 0, 0, 0 },
+        };
+
+        const dynstate = [_]vk.DynamicState{ .viewport, .scissor };
+        const pdsci = vk.PipelineDynamicStateCreateInfo{
+            .flags = .{},
+            .dynamic_state_count = dynstate.len,
+            .p_dynamic_states = &dynstate,
+        };
+
+        const depth_stencil_info = vk.PipelineDepthStencilStateCreateInfo{
+            .depth_test_enable = vk.TRUE,
+            .depth_write_enable = vk.TRUE,
+            .depth_compare_op = .less,
+            .depth_bounds_test_enable = vk.FALSE,
+            .stencil_test_enable = vk.FALSE,
+            .front = .{
+                .fail_op = .keep,
+                .pass_op = .replace,
+                .depth_fail_op = .keep,
+                .compare_op = .always,
+                .compare_mask = 0xFF,
+                .write_mask = 0xFF,
+                .reference = 1,
+            },
+            .back = .{
+                .fail_op = .keep,
+                .pass_op = .replace,
+                .depth_fail_op = .keep,
+                .compare_op = .always,
+                .compare_mask = 0xFF,
+                .write_mask = 0xFF,
+                .reference = 1,
+            },
+            .min_depth_bounds = 0.0,
+            .max_depth_bounds = 1.0,
+        };
+
+        const gpci = vk.GraphicsPipelineCreateInfo{
+            .flags = .{},
+            .stage_count = 2,
+            .p_stages = &pssci,
+            .p_vertex_input_state = &pvisci,
+            .p_input_assembly_state = &piasci,
+            .p_tessellation_state = null,
+            .p_viewport_state = &pvsci,
+            .p_rasterization_state = &prsci,
+            .p_multisample_state = &pmsci,
+            .p_depth_stencil_state = &depth_stencil_info,
+            .p_color_blend_state = &pcbsci,
+            .p_dynamic_state = &pdsci,
+            .layout = layout,
+            .render_pass = v.pass,
+            .subpass = 0,
+            .base_pipeline_handle = .null_handle,
+            .base_pipeline_index = -1,
+        };
+
+        var pipeline: vk.Pipeline = undefined;
+        _ = try device.createGraphicsPipelines(
+            .null_handle,
+            1,
+            @ptrCast(&gpci),
+            null,
+            @ptrCast(&pipeline),
+        );
+        return .{ .pipeline = pipeline, .layout = layout };
+    }
+
+    pub fn deinit(self: *@This(), device: *Device) void {
+        device.destroyPipeline(self.pipeline, null);
+        device.destroyPipelineLayout(self.layout, null);
+    }
+};
+
 pub const RenderPass = struct {
     pass: vk.RenderPass,
 

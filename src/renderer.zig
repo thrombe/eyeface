@@ -403,9 +403,8 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     };
     device.updateDescriptorSets(compute_desc_set_updates.len, &compute_desc_set_updates, 0, null);
 
-    var compiler = utils.Glslc.Compiler{ .opt = .fast, .env = .vulkan1_3 };
+    const compiler = utils.Glslc.Compiler{ .opt = .fast, .env = .vulkan1_3 };
     const vert_spv = blk: {
-        compiler.stage = .vertex;
         const vert: utils.Glslc.Compiler.Code = .{ .path = .{
             .main = "./src/shader.glsl",
             .include = &[_][]const u8{},
@@ -416,6 +415,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             allocator,
             &vert,
             .spirv,
+            .vertex,
         );
         switch (res) {
             .Err => |msg| {
@@ -431,7 +431,6 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     };
     defer allocator.free(vert_spv);
     const frag_spv = blk: {
-        compiler.stage = .fragment;
         const frag: utils.Glslc.Compiler.Code = .{ .path = .{
             .main = "./src/shader.glsl",
             .include = &[_][]const u8{},
@@ -442,6 +441,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             allocator,
             &frag,
             .spirv,
+            .fragment,
         );
         switch (res) {
             .Err => |msg| {
@@ -594,7 +594,6 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
 
         for (pipelines, 0..) |p, i| {
             const compute_spv = blk1: {
-                compiler.stage = .compute;
                 const frag: utils.Glslc.Compiler.Code = .{ .path = .{
                     .main = p.path,
                     .include = &[_][]const u8{},
@@ -605,6 +604,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
                     allocator,
                     &frag,
                     .spirv,
+                    .compute,
                 );
                 switch (res) {
                     .Err => |msg| {

@@ -463,16 +463,16 @@ pub const Glslc = struct {
             small,
             fast,
         };
+        pub const Stage = enum {
+            vertex,
+            fragment,
+            compute,
+        };
         opt: Opt = .none,
         lang: enum {
             glsl,
             hlsl,
         } = .glsl,
-        stage: enum {
-            vertex,
-            fragment,
-            compute,
-        } = .fragment,
         env: enum {
             vulkan1_3,
             vulkan1_2,
@@ -505,9 +505,14 @@ pub const Glslc = struct {
             }, Err);
         }
 
-        pub fn dump_assembly(self: @This(), alloc: std.mem.Allocator, code: *const Code) !Result(void, Err) {
+        pub fn dump_assembly(
+            self: @This(),
+            alloc: std.mem.Allocator,
+            code: *const Code,
+            stage: Stage,
+        ) !Result(void, Err) {
             // std.debug.print("{s}\n", .{code});
-            const res = try self.compile(alloc, code, .assembly);
+            const res = try self.compile(alloc, code, .assembly, stage);
             switch (res) {
                 .Ok => |bytes| {
                     defer alloc.free(bytes);
@@ -520,7 +525,13 @@ pub const Glslc = struct {
             }
         }
 
-        pub fn compile(self: @This(), alloc: std.mem.Allocator, code: *const Code, comptime output_type: OutputType) !CompileResult(output_type) {
+        pub fn compile(
+            self: @This(),
+            alloc: std.mem.Allocator,
+            code: *const Code,
+            comptime output_type: OutputType,
+            stage: Stage,
+        ) !CompileResult(output_type) {
             var args = std.ArrayList([]const u8).init(alloc);
             defer {
                 for (args.items) |arg| {
@@ -529,7 +540,7 @@ pub const Glslc = struct {
                 args.deinit();
             }
             try args.append(try alloc.dupe(u8, "glslc"));
-            try args.append(try alloc.dupe(u8, switch (self.stage) {
+            try args.append(try alloc.dupe(u8, switch (stage) {
                 .fragment => "-fshader-stage=fragment",
                 .vertex => "-fshader-stage=vertex",
                 .compute => "-fshader-stage=compute",

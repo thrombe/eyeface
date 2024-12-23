@@ -54,7 +54,7 @@ pub fn main() !void {
 
             const lap = timer.lap();
             app_state.tick(lap, engine.window);
-            renderer.uniforms = app_state.uniforms(engine.window);
+            renderer.uniforms.uniforms = app_state.uniforms(engine.window);
 
             gui_renderer.render_start();
             gui_state.tick(&app_state, lap);

@@ -26,9 +26,7 @@ const allocator = main.allocator;
 const Renderer = @This();
 
 swapchain: Swapchain,
-uniforms: Uniforms,
-uniform_buffer: vk.Buffer,
-uniform_memory: vk.DeviceMemory,
+uniforms: UniformBuffer(Uniforms),
 vertex_buffer_memory: vk.DeviceMemory,
 vertex_buffer: vk.Buffer,
 // - [Depth buffering - Vulkan Tutorial](https://vulkan-tutorial.com/Depth_buffering)
@@ -116,21 +114,8 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     var swapchain = try Swapchain.init(ctx, engine.window.extent);
     errdefer swapchain.deinit(device);
 
-    const uniform_buffer = try device.createBuffer(&.{
-        .size = @sizeOf(Uniforms),
-        .usage = .{
-            .uniform_buffer_bit = true,
-        },
-        .sharing_mode = .exclusive,
-    }, null);
-    errdefer device.destroyBuffer(uniform_buffer, null);
-    const uniform_mem_req = device.getBufferMemoryRequirements(uniform_buffer);
-    const uniform_buffer_memory = try ctx.allocate(uniform_mem_req, .{
-        .host_visible_bit = true,
-        .host_coherent_bit = true,
-    });
-    errdefer device.freeMemory(uniform_buffer_memory, null);
-    try device.bindBufferMemory(uniform_buffer, uniform_buffer_memory, 0);
+    var uniforms = try UniformBuffer(Uniforms).new(app_state.uniforms(engine.window), ctx);
+    errdefer uniforms.deinit(device);
 
     const pool = try device.createCommandPool(&.{
         .queue_family_index = ctx.graphics_queue.family,
@@ -257,16 +242,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     errdefer reduction.deinit(device);
 
     const frag_bindings = [_]vk.DescriptorSetLayoutBinding{
-        .{
-            .binding = 0,
-            .descriptor_type = .uniform_buffer,
-            .descriptor_count = 1,
-            .stage_flags = .{
-                .vertex_bit = true,
-                .fragment_bit = true,
-                .compute_bit = true,
-            },
-        },
+        uniforms.layout_binding(0),
         voxels.layout_binding(1),
         occlusion.layout_binding(2),
         screen.layout_binding(3),
@@ -281,16 +257,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     errdefer device.destroyDescriptorSetLayout(frag_desc_set_layout, null);
 
     const compute_bindings = [_]vk.DescriptorSetLayoutBinding{
-        .{
-            .binding = 0,
-            .descriptor_type = .uniform_buffer,
-            .descriptor_count = 1,
-            .stage_flags = .{
-                .vertex_bit = true,
-                .fragment_bit = true,
-                .compute_bit = true,
-            },
-        },
+        uniforms.layout_binding(0),
         .{
             .binding = 1,
             .descriptor_type = .storage_buffer,
@@ -342,21 +309,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         .p_set_layouts = @ptrCast(&compute_desc_set_layout),
     }, @ptrCast(&compute_desc_set));
     const frag_desc_set_updates = [_]vk.WriteDescriptorSet{
-        .{
-            .dst_set = frag_desc_set,
-            .dst_binding = 0,
-            .dst_array_element = 0,
-            .descriptor_count = 1,
-            .descriptor_type = .uniform_buffer,
-            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
-                .buffer = uniform_buffer,
-                .offset = 0,
-                .range = @sizeOf(Uniforms),
-            }},
-            // OOF: ??
-            .p_image_info = undefined,
-            .p_texel_buffer_view = undefined,
-        },
+        uniforms.write_desc_set(0, frag_desc_set),
         voxels.write_desc_set(1, frag_desc_set),
         occlusion.write_desc_set(2, frag_desc_set),
         screen.write_desc_set(3, frag_desc_set),
@@ -365,21 +318,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     };
     device.updateDescriptorSets(frag_desc_set_updates.len, &frag_desc_set_updates, 0, null);
     const compute_desc_set_updates = [_]vk.WriteDescriptorSet{
-        .{
-            .dst_set = compute_desc_set,
-            .dst_binding = 0,
-            .dst_array_element = 0,
-            .descriptor_count = 1,
-            .descriptor_type = .uniform_buffer,
-            .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
-                .buffer = uniform_buffer,
-                .offset = 0,
-                .range = @sizeOf(Uniforms),
-            }},
-            // OOF: ??
-            .p_image_info = undefined,
-            .p_texel_buffer_view = undefined,
-        },
+        uniforms.write_desc_set(0, compute_desc_set),
         .{
             .dst_set = compute_desc_set,
             .dst_binding = 1,
@@ -836,8 +775,6 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         allocator.free(framebuffers);
     }
 
-    const uniforms = app_state.uniforms(engine.window);
-
     const command_buffers = blk: {
         const cmdbufs = try allocator.alloc(vk.CommandBuffer, framebuffers.len);
         errdefer allocator.free(cmdbufs);
@@ -973,8 +910,6 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     return .{
         .swapchain = swapchain,
         .uniforms = uniforms,
-        .uniform_buffer = uniform_buffer,
-        .uniform_memory = uniform_buffer_memory,
         .vertex_buffer_memory = vertex_buffer.memory,
         .vertex_buffer = vertex_buffer.buffer,
         .depth_image = depth_image.image,
@@ -1012,10 +947,7 @@ pub fn deinit(self: *@This(), device: *Device) void {
 
     defer self.swapchain.deinit(device);
 
-    defer {
-        device.destroyBuffer(self.uniform_buffer, null);
-        device.freeMemory(self.uniform_memory, null);
-    }
+    defer self.uniforms.deinit(device);
     defer {
         device.destroyBuffer(self.vertex_buffer, null);
         device.freeMemory(self.vertex_buffer_memory, null);
@@ -1067,7 +999,7 @@ pub fn present(
     const cmdbuf = self.command_buffers[self.swapchain.image_index];
     const gui_cmdbuf = gui_renderer.cmd_bufs[self.swapchain.image_index];
 
-    return self.swapchain.present(&[_]vk.CommandBuffer{ cmdbuf, gui_cmdbuf }, ctx, &self.uniforms, &self.uniform_memory) catch |err| switch (err) {
+    return self.swapchain.present(&[_]vk.CommandBuffer{ cmdbuf, gui_cmdbuf }, ctx, &self.uniforms) catch |err| switch (err) {
         error.OutOfDateKHR => return .suboptimal,
         else => |narrow| return narrow,
     };
@@ -1111,6 +1043,87 @@ pub fn copyBuffer(
     };
     try device.queueSubmit(ctx.graphics_queue.handle, 1, @ptrCast(&si), .null_handle);
     try device.queueWaitIdle(ctx.graphics_queue.handle);
+}
+
+
+pub fn UniformBuffer(T: type) type {
+    return struct {
+        uniforms: T,
+        buffer: vk.Buffer,
+        memory: vk.DeviceMemory,
+        dbi: vk.DescriptorBufferInfo,
+
+        pub fn new(uniforms: T, ctx: *Engine.VulkanContext) !@This() {
+            const device = &ctx.device;
+
+            const buffer = try device.createBuffer(&.{
+                .size = @sizeOf(T),
+                .usage = .{
+                    .uniform_buffer_bit = true,
+                },
+                .sharing_mode = .exclusive,
+            }, null);
+            errdefer device.destroyBuffer(buffer, null);
+            const mem_req = device.getBufferMemoryRequirements(buffer);
+            const memory = try ctx.allocate(mem_req, .{
+                .host_visible_bit = true,
+                .host_coherent_bit = true,
+            });
+            errdefer device.freeMemory(memory, null);
+            try device.bindBufferMemory(buffer, memory, 0);
+
+            return .{
+                .uniforms = uniforms,
+                .buffer = buffer,
+                .memory = memory,
+                .dbi = .{
+                    .buffer = buffer,
+                    .offset = 0,
+                    .range = vk.WHOLE_SIZE,
+                },
+            };
+        }
+
+        pub fn deinit(self: *@This(), device: *Device) void {
+            device.destroyBuffer(self.buffer, null);
+            device.freeMemory(self.memory, null);
+        }
+
+        pub fn upload(self: *@This(), device: *Device) !void {
+            const maybe_mapped = try device.mapMemory(self.memory, 0, @sizeOf(T), .{});
+            const mapped = maybe_mapped orelse return error.MappingMemoryFailed;
+            defer device.unmapMemory(self.memory);
+
+            @memcpy(@as([*]u8, @ptrCast(mapped)), std.mem.asBytes(&self.uniforms));
+        }
+
+        pub fn layout_binding(_: *@This(), index: u32) vk.DescriptorSetLayoutBinding {
+            return .{
+                .binding = index,
+                .descriptor_type = .uniform_buffer,
+                .descriptor_count = 1,
+                .stage_flags = .{
+                    .vertex_bit = true,
+                    .fragment_bit = true,
+                    .compute_bit = true,
+                },
+            };
+        }
+
+        pub fn write_desc_set(self: *@This(), binding: u32, desc_set: vk.DescriptorSet) vk.WriteDescriptorSet {
+            return .{
+                .dst_set = desc_set,
+                .dst_binding = binding,
+                .dst_array_element = 0,
+                .descriptor_count = 1,
+                .descriptor_type = .uniform_buffer,
+                .p_buffer_info = @ptrCast(&self.dbi),
+                // OOF: ??
+                .p_image_info = undefined,
+                .p_texel_buffer_view = undefined,
+            };
+        }
+    };
 }
 
 pub const Buffer = struct {
@@ -1362,7 +1375,7 @@ pub const Swapchain = struct {
         return &self.swap_images[self.image_index];
     }
 
-    pub fn present(self: *Swapchain, cmdbufs: []const vk.CommandBuffer, ctx: *Engine.VulkanContext, uniforms: *Uniforms, uniform_memory: *vk.DeviceMemory) !PresentState {
+    pub fn present(self: *Swapchain, cmdbufs: []const vk.CommandBuffer, ctx: *Engine.VulkanContext, uniforms: *UniformBuffer(Uniforms)) !PresentState {
         // Simple method:
         // 1) Acquire next image
         // 2) Wait for and reset fence of the acquired image
@@ -1385,13 +1398,7 @@ pub const Swapchain = struct {
         try current.waitForFence(&ctx.device);
         try ctx.device.resetFences(1, @ptrCast(&current.frame_fence));
 
-        {
-            const maybe_mapped = try ctx.device.mapMemory(uniform_memory.*, 0, @sizeOf(@TypeOf(uniforms.*)), .{});
-            const mapped = maybe_mapped orelse return error.MappingMemoryFailed;
-            defer ctx.device.unmapMemory(uniform_memory.*);
-
-            @memcpy(@as([*]u8, @ptrCast(mapped)), std.mem.asBytes(uniforms));
-        }
+        try uniforms.upload(&ctx.device);
 
         // Step 2: Submit the command buffer
         const wait_stage = [_]vk.PipelineStageFlags{.{ .top_of_pipe_bit = true }};

@@ -24,6 +24,7 @@ const render_utils = @import("render_utils.zig");
 const Swapchain = render_utils.Swapchain;
 const UniformBuffer = render_utils.UniformBuffer;
 const Buffer = render_utils.Buffer;
+const Image = render_utils.Image;
 
 const main = @import("main.zig");
 const allocator = main.allocator;
@@ -35,9 +36,7 @@ uniforms: UniformBuffer(Uniforms),
 vertex_buffer: Buffer,
 // - [Depth buffering - Vulkan Tutorial](https://vulkan-tutorial.com/Depth_buffering)
 // - [Setting up depth buffer - Vulkan Guide](https://vkguide.dev/docs/chapter-3/depth_buffer/)
-depth_image: vk.Image,
-depth_buffer_memory: vk.DeviceMemory,
-depth_image_view: vk.ImageView,
+depth_image: Image,
 voxel_buffer: Buffer,
 occlusion_buffer: Buffer,
 screen_buffer: Buffer,
@@ -139,63 +138,23 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
 
     // apparently you don't need to create more than 1 depth buffer even if you have many
     // framebuffers
-    const depth_image = blk: {
-        const img = try device.createImage(&.{
-            .image_type = .@"2d",
-            .format = .d32_sfloat,
-            .extent = .{
-                .width = engine.window.extent.width,
-                .height = engine.window.extent.height,
-                .depth = 1,
-            },
-            .mip_levels = 1,
-            .array_layers = 1,
-            .samples = .{ .@"1_bit" = true },
-            .tiling = .optimal,
-            .usage = .{
-                .depth_stencil_attachment_bit = true,
-            },
-            .sharing_mode = .exclusive,
-            .initial_layout = .undefined,
-        }, null);
-        errdefer device.destroyImage(img, null);
-
-        const mem_reqs = device.getImageMemoryRequirements(img);
-        const memory = try ctx.allocate(mem_reqs, .{ .device_local_bit = true });
-        errdefer device.freeMemory(memory, null);
-        try device.bindImageMemory(img, memory, 0);
-
-        const view = try device.createImageView(&.{
-            .image = img,
-            .view_type = .@"2d",
-            .format = .d32_sfloat,
-            .components = .{
-                .r = .identity,
-                .g = .identity,
-                .b = .identity,
-                .a = .identity,
-            },
-            .subresource_range = .{
-                .aspect_mask = .{ .depth_bit = true },
-                .base_mip_level = 0,
-                .level_count = 1,
-                .base_array_layer = 0,
-                .layer_count = 1,
-            },
-        }, null);
-        errdefer device.destroyImageView(view, null);
-
-        break :blk .{
-            .image = img,
-            .memory = memory,
-            .view = view,
-        };
-    };
-    errdefer {
-        device.destroyImageView(depth_image.view, null);
-        device.freeMemory(depth_image.memory, null);
-        device.destroyImage(depth_image.image, null);
-    }
+    var depth_image = try Image.new(ctx, .{
+        .img_type = .@"2d",
+        .img_view_type = .@"2d",
+        .format = .d32_sfloat,
+        .extent = .{
+            .width = engine.window.extent.width,
+            .height = engine.window.extent.height,
+            .depth = 1,
+        },
+        .usage = .{
+            .depth_stencil_attachment_bit = true,
+        },
+        .view_aspect_mask = .{
+            .depth_bit = true,
+        },
+    });
+    errdefer depth_image.deinit(device);
 
     var voxels = try Buffer.new(ctx, .{ .size = @sizeOf(u32) * try std.math.powi(u32, app_state.voxels.side, 3) });
     errdefer voxels.deinit(device);
@@ -858,9 +817,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         .swapchain = swapchain,
         .uniforms = uniforms,
         .vertex_buffer = vertex_buffer,
-        .depth_image = depth_image.image,
-        .depth_buffer_memory = depth_image.memory,
-        .depth_image_view = depth_image.view,
+        .depth_image = depth_image,
         .voxel_buffer = voxels,
         .occlusion_buffer = occlusion,
         .screen_buffer = screen,
@@ -895,11 +852,7 @@ pub fn deinit(self: *@This(), device: *Device) void {
 
     defer self.uniforms.deinit(device);
     defer self.vertex_buffer.deinit(device);
-    defer {
-        device.destroyImageView(self.depth_image_view, null);
-        device.freeMemory(self.depth_buffer_memory, null);
-        device.destroyImage(self.depth_image, null);
-    }
+    defer self.depth_image.deinit(device);
     defer {
         self.voxel_buffer.deinit(device);
         self.occlusion_buffer.deinit(device);

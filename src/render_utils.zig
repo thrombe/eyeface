@@ -12,6 +12,76 @@ const Device = Engine.VulkanContext.Api.Device;
 // TODO: don't depend on this
 const Uniforms = @import("renderer.zig").Uniforms;
 
+pub const Image = struct {
+    image: vk.Image,
+    memory: vk.DeviceMemory,
+    view: vk.ImageView,
+
+    pub const Args = struct {
+        img_type: vk.ImageType,
+        img_view_type: vk.ImageViewType,
+        format: vk.Format,
+        extent: vk.Extent3D,
+        usage: vk.ImageUsageFlags = .{},
+        view_aspect_mask: vk.ImageAspectFlags = .{},
+    };
+
+    pub fn new(ctx: *Engine.VulkanContext, v: Args) !@This() {
+        const device = &ctx.device;
+
+        const img = try device.createImage(&.{
+            .image_type = v.img_type,
+            .format = v.format,
+            .extent = v.extent,
+            .mip_levels = 1,
+            .array_layers = 1,
+            .samples = .{ .@"1_bit" = true },
+            .tiling = .optimal,
+            .usage = v.usage,
+            .sharing_mode = .exclusive,
+            .initial_layout = .undefined,
+        }, null);
+        errdefer device.destroyImage(img, null);
+
+        const mem_reqs = device.getImageMemoryRequirements(img);
+        const memory = try ctx.allocate(mem_reqs, .{ .device_local_bit = true });
+        errdefer device.freeMemory(memory, null);
+        try device.bindImageMemory(img, memory, 0);
+
+        const view = try device.createImageView(&.{
+            .image = img,
+            .view_type = v.img_view_type,
+            .format = v.format,
+            .components = .{
+                .r = .identity,
+                .g = .identity,
+                .b = .identity,
+                .a = .identity,
+            },
+            .subresource_range = .{
+                .aspect_mask = v.view_aspect_mask,
+                .base_mip_level = 0,
+                .level_count = 1,
+                .base_array_layer = 0,
+                .layer_count = 1,
+            },
+        }, null);
+        errdefer device.destroyImageView(view, null);
+
+        return .{
+            .image = img,
+            .memory = memory,
+            .view = view,
+        };
+    }
+
+    pub fn deinit(self: *@This(), device: *Device) void {
+        device.destroyImageView(self.view, null);
+        device.freeMemory(self.memory, null);
+        device.destroyImage(self.image, null);
+    }
+};
+
 pub fn UniformBuffer(T: type) type {
     return struct {
         uniforms: T,
@@ -97,7 +167,10 @@ pub const Buffer = struct {
     memory: vk.DeviceMemory,
     dbi: vk.DescriptorBufferInfo,
 
-    const Args = struct { size: u64, usage: vk.BufferUsageFlags = .{} };
+    const Args = struct {
+        size: u64,
+        usage: vk.BufferUsageFlags = .{},
+    };
 
     pub fn new_initialized(ctx: *Engine.VulkanContext, v: Args, val: anytype, pool: vk.CommandPool) !@This() {
         const this = try @This().new(

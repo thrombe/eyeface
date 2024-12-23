@@ -213,9 +213,14 @@ pub const FsFuse = struct {
         @cInclude("libfswatch/c/libfswatch.h");
     });
 
-    const Event = union(enum) {
-        All,
-        File: []const u8,
+    const Event = struct {
+        file: []const u8,
+        real: []const u8,
+
+        pub fn deinit(self: *const @This()) void {
+            allocator.free(self.file);
+            allocator.free(self.real);
+        }
     };
     const Chan = Channel(Event);
     const Ctx = struct {
@@ -323,7 +328,10 @@ pub const FsFuse = struct {
 
                         if (ctx) |cctx| {
                             const stripped = std.fs.path.relative(allocator, cctx.path, std.mem.span(event.path)) catch unreachable;
-                            cctx.channel.send(.{ .File = stripped }) catch unreachable;
+                            cctx.channel.send(.{
+                                .file = stripped,
+                                .real = allocator.dupe(u8, std.mem.span(event.path)) catch unreachable,
+                            }) catch unreachable;
                         } else {
                             std.debug.print("Error: Event ignored! type: '{s}' path: '{s}'", .{ event.path, name });
                         }

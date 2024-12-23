@@ -28,6 +28,8 @@ const Image = render_utils.Image;
 const RenderPass = render_utils.RenderPass;
 const GraphicsPipeline = render_utils.GraphicsPipeline;
 const ComputePipeline = render_utils.ComputePipeline;
+const DescriptorPool = render_utils.DescriptorPool;
+const DescriptorSet = render_utils.DescriptorSet;
 
 const main = @import("main.zig");
 const allocator = main.allocator;
@@ -45,11 +47,9 @@ occlusion_buffer: Buffer,
 screen_buffer: Buffer,
 screen_depth_buffer: Buffer,
 reduction_buffer: Buffer,
-descriptor_pool: vk.DescriptorPool,
-frag_descriptor_set_layout: vk.DescriptorSetLayout,
-frag_descriptor_set: vk.DescriptorSet,
-compute_descriptor_set_layout: vk.DescriptorSetLayout,
-compute_descriptor_set: vk.DescriptorSet,
+descriptor_pool: DescriptorPool,
+render_descriptor_set: DescriptorSet,
+compute_descriptor_set: DescriptorSet,
 pass: RenderPass,
 compute_pipelines: []ComputePipeline,
 pipeline: GraphicsPipeline,
@@ -121,20 +121,20 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     var uniforms = try UniformBuffer(Uniforms).new(app_state.uniforms(engine.window), ctx);
     errdefer uniforms.deinit(device);
 
-    const pool = try device.createCommandPool(&.{
+    const cmd_pool = try device.createCommandPool(&.{
         .queue_family_index = ctx.graphics_queue.family,
         .flags = .{
             .reset_command_buffer_bit = true,
         },
     }, null);
-    errdefer device.destroyCommandPool(pool, null);
+    errdefer device.destroyCommandPool(cmd_pool, null);
 
     var vertex_buffer = try Buffer.new_initialized(ctx, .{
         .size = @sizeOf(Vertex) * app_state.points_x_64 * 64,
         .usage = .{
             .vertex_buffer_bit = true,
         },
-    }, Vertex{ .pos = .{ 0, 0, 0, 1 } }, pool);
+    }, Vertex{ .pos = .{ 0, 0, 0, 1 } }, cmd_pool);
     errdefer vertex_buffer.deinit(device);
 
     // apparently you don't need to create more than 1 depth buffer even if you have many
@@ -171,83 +171,31 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     var reduction = try Buffer.new(ctx, .{ .size = @sizeOf(f32) * 4 * 3 + @sizeOf(f32) * 3 * app_state.reduction_points_x_64 * 64 });
     errdefer reduction.deinit(device);
 
-    const frag_bindings = [_]vk.DescriptorSetLayoutBinding{
-        uniforms.layout_binding(0),
-        voxels.layout_binding(1),
-        occlusion.layout_binding(2),
-        screen.layout_binding(3),
-        screen_depth.layout_binding(4),
-        reduction.layout_binding(5),
-    };
-    const frag_desc_set_layout = try device.createDescriptorSetLayout(&.{
-        .flags = .{},
-        .binding_count = frag_bindings.len,
-        .p_bindings = &frag_bindings,
-    }, null);
-    errdefer device.destroyDescriptorSetLayout(frag_desc_set_layout, null);
+    var desc_pool = try DescriptorPool.new(device);
+    errdefer desc_pool.deinit(device);
 
-    const compute_bindings = [_]vk.DescriptorSetLayoutBinding{
-        uniforms.layout_binding(0),
-        vertex_buffer.layout_binding(1),
-        voxels.layout_binding(2),
-        occlusion.layout_binding(3),
-        screen.layout_binding(4),
-        screen_depth.layout_binding(5),
-        reduction.layout_binding(6),
-    };
-    const compute_desc_set_layout = try device.createDescriptorSetLayout(&.{
-        .flags = .{},
-        .binding_count = compute_bindings.len,
-        .p_bindings = &compute_bindings,
-    }, null);
-    errdefer device.destroyDescriptorSetLayout(compute_desc_set_layout, null);
-    const pool_sizes = [_]vk.DescriptorPoolSize{
-        .{
-            .type = .uniform_buffer,
-            .descriptor_count = 1,
-        },
-        .{
-            .type = .storage_buffer,
-            .descriptor_count = 6,
-        },
-    };
-    const desc_pool = try device.createDescriptorPool(&.{
-        .max_sets = 2,
-        .pool_size_count = pool_sizes.len,
-        .p_pool_sizes = &pool_sizes,
-    }, null);
-    errdefer device.destroyDescriptorPool(desc_pool, null);
-    var frag_desc_set: vk.DescriptorSet = undefined;
-    var compute_desc_set: vk.DescriptorSet = undefined;
-    try device.allocateDescriptorSets(&.{
-        .descriptor_pool = desc_pool,
-        .descriptor_set_count = 1,
-        .p_set_layouts = @ptrCast(&frag_desc_set_layout),
-    }, @ptrCast(&frag_desc_set));
-    try device.allocateDescriptorSets(&.{
-        .descriptor_pool = desc_pool,
-        .descriptor_set_count = 1,
-        .p_set_layouts = @ptrCast(&compute_desc_set_layout),
-    }, @ptrCast(&compute_desc_set));
-    const frag_desc_set_updates = [_]vk.WriteDescriptorSet{
-        uniforms.write_desc_set(0, frag_desc_set),
-        voxels.write_desc_set(1, frag_desc_set),
-        occlusion.write_desc_set(2, frag_desc_set),
-        screen.write_desc_set(3, frag_desc_set),
-        screen_depth.write_desc_set(4, frag_desc_set),
-        reduction.write_desc_set(5, frag_desc_set),
-    };
-    device.updateDescriptorSets(frag_desc_set_updates.len, &frag_desc_set_updates, 0, null);
-    const compute_desc_set_updates = [_]vk.WriteDescriptorSet{
-        uniforms.write_desc_set(0, compute_desc_set),
-        vertex_buffer.write_desc_set(1, compute_desc_set),
-        voxels.write_desc_set(2, compute_desc_set),
-        occlusion.write_desc_set(3, compute_desc_set),
-        screen.write_desc_set(4, compute_desc_set),
-        screen_depth.write_desc_set(5, compute_desc_set),
-        reduction.write_desc_set(6, compute_desc_set),
-    };
-    device.updateDescriptorSets(compute_desc_set_updates.len, &compute_desc_set_updates, 0, null);
+    var render_set_builder = desc_pool.set_builder();
+    defer render_set_builder.deinit();
+    try render_set_builder.add(&uniforms);
+    try render_set_builder.add(&voxels);
+    try render_set_builder.add(&occlusion);
+    try render_set_builder.add(&screen);
+    try render_set_builder.add(&screen_depth);
+    try render_set_builder.add(&reduction);
+    var render_set = try render_set_builder.build(device);
+    errdefer render_set.deinit(device);
+
+    var compute_set_builder = desc_pool.set_builder();
+    defer compute_set_builder.deinit();
+    try compute_set_builder.add(&uniforms);
+    try compute_set_builder.add(&vertex_buffer);
+    try compute_set_builder.add(&voxels);
+    try compute_set_builder.add(&occlusion);
+    try compute_set_builder.add(&screen);
+    try compute_set_builder.add(&screen_depth);
+    try compute_set_builder.add(&reduction);
+    var compute_set = try compute_set_builder.build(device);
+    errdefer compute_set.deinit(device);
 
     const compiler = utils.Glslc.Compiler{ .opt = .fast, .env = .vulkan1_3 };
     const vert_spv = blk: {
@@ -383,7 +331,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
 
             pipelines[i].pipeline = try ComputePipeline.new(device, .{
                 .shader = compute_spv,
-                .desc_set_layouts = &[_]vk.DescriptorSetLayout{compute_desc_set_layout},
+                .desc_set_layouts = &[_]vk.DescriptorSetLayout{compute_set.layout},
             });
         }
 
@@ -399,7 +347,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         .vert = vert_spv,
         .frag = frag_spv,
         .pass = pass.pass,
-        .desc_set_layouts = &[_]vk.DescriptorSetLayout{frag_desc_set_layout},
+        .desc_set_layouts = &[_]vk.DescriptorSetLayout{render_set.layout},
     });
     errdefer pipeline.deinit(device);
 
@@ -434,11 +382,11 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         errdefer allocator.free(cmdbufs);
 
         try device.allocateCommandBuffers(&.{
-            .command_pool = pool,
+            .command_pool = cmd_pool,
             .level = .primary,
             .command_buffer_count = @intCast(cmdbufs.len),
         }, cmdbufs.ptr);
-        errdefer device.freeCommandBuffers(pool, @intCast(cmdbufs.len), cmdbufs.ptr);
+        errdefer device.freeCommandBuffers(cmd_pool, @intCast(cmdbufs.len), cmdbufs.ptr);
 
         const clear = [_]vk.ClearValue{
             .{
@@ -472,7 +420,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
 
             for (compute_pipelines) |p| {
                 device.cmdBindPipeline(cmdbuf, .compute, p.pipeline.pipeline);
-                device.cmdBindDescriptorSets(cmdbuf, .compute, p.pipeline.layout, 0, 1, @ptrCast(&compute_desc_set), 0, null);
+                device.cmdBindDescriptorSets(cmdbuf, .compute, p.pipeline.layout, 0, 1, @ptrCast(&compute_set.set), 0, null);
 
                 var x = p.group_x;
                 while (x >= 1) {
@@ -547,7 +495,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             }, .@"inline");
 
             device.cmdBindPipeline(cmdbuf, .graphics, pipeline.pipeline);
-            device.cmdBindDescriptorSets(cmdbuf, .graphics, pipeline.layout, 0, 1, @ptrCast(&frag_desc_set), 0, null);
+            device.cmdBindDescriptorSets(cmdbuf, .graphics, pipeline.layout, 0, 1, @ptrCast(&render_set.set), 0, null);
             device.cmdDraw(cmdbuf, 6, 1, 0, 0);
 
             device.cmdEndRenderPass(cmdbuf);
@@ -557,7 +505,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         break :blk cmdbufs;
     };
     errdefer {
-        device.freeCommandBuffers(pool, @truncate(command_buffers.len), command_buffers.ptr);
+        device.freeCommandBuffers(cmd_pool, @truncate(command_buffers.len), command_buffers.ptr);
         allocator.free(command_buffers);
     }
 
@@ -572,10 +520,8 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         .screen_depth_buffer = screen_depth,
         .reduction_buffer = reduction,
         .descriptor_pool = desc_pool,
-        .frag_descriptor_set_layout = frag_desc_set_layout,
-        .frag_descriptor_set = frag_desc_set,
-        .compute_descriptor_set_layout = compute_desc_set_layout,
-        .compute_descriptor_set = compute_desc_set,
+        .render_descriptor_set = render_set,
+        .compute_descriptor_set = compute_set,
         .pass = pass,
         .compute_pipelines = blk: {
             const pipelines = try allocator.alloc(ComputePipeline, compute_pipelines.len);
@@ -586,7 +532,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         },
         .pipeline = pipeline,
         .framebuffers = framebuffers,
-        .command_pool = pool,
+        .command_pool = cmd_pool,
         .command_buffers = command_buffers,
     };
 }
@@ -607,9 +553,9 @@ pub fn deinit(self: *@This(), device: *Device) void {
 
     defer self.screen_depth_buffer.deinit(device);
     defer self.reduction_buffer.deinit(device);
-    defer device.destroyDescriptorSetLayout(self.frag_descriptor_set_layout, null);
-    defer device.destroyDescriptorSetLayout(self.compute_descriptor_set_layout, null);
-    defer device.destroyDescriptorPool(self.descriptor_pool, null);
+    defer self.render_descriptor_set.deinit(device);
+    defer self.compute_descriptor_set.deinit(device);
+    defer self.descriptor_pool.deinit(device);
 
     defer self.pass.deinit(device);
     defer {

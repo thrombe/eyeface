@@ -9,8 +9,99 @@ const allocator = main.allocator;
 
 const Device = Engine.VulkanContext.Api.Device;
 
-// TODO: don't depend on this
-const Uniforms = @import("renderer.zig").Uniforms;
+pub const DescriptorPool = struct {
+    pool: vk.DescriptorPool,
+
+    pub fn new(device: *Device) !@This() {
+        const pool_sizes = [_]vk.DescriptorPoolSize{
+            .{
+                .type = .uniform_buffer,
+                .descriptor_count = 100,
+            },
+            .{
+                .type = .storage_buffer,
+                .descriptor_count = 100,
+            },
+        };
+        const desc_pool = try device.createDescriptorPool(&.{
+            .max_sets = 100,
+            .pool_size_count = pool_sizes.len,
+            .p_pool_sizes = &pool_sizes,
+        }, null);
+        errdefer device.destroyDescriptorPool(desc_pool, null);
+
+        return .{
+            .pool = desc_pool,
+        };
+    }
+
+    pub fn deinit(self: *@This(), device: *Device) void {
+        device.destroyDescriptorPool(self.pool, null);
+    }
+
+    pub fn set_builder(self: *const @This()) DescriptorSet.Builder {
+        return .{
+            .pool = self.pool,
+        };
+    }
+};
+
+pub const DescriptorSet = struct {
+    set: vk.DescriptorSet,
+    layout: vk.DescriptorSetLayout,
+
+    pub fn deinit(self: *@This(), device: *Device) void {
+        device.destroyDescriptorSetLayout(self.layout, null);
+
+        // NOTE: self.set is deinited from it's pool
+    }
+
+    pub const Builder = struct {
+        pool: vk.DescriptorPool,
+        layout_binding: std.ArrayListUnmanaged(vk.DescriptorSetLayoutBinding) = .{},
+        desc_set_update: std.ArrayListUnmanaged(vk.WriteDescriptorSet) = .{},
+
+        pub fn add(self: *@This(), binding: anytype) !void {
+            try self.layout_binding.append(allocator, binding.layout_binding(@intCast(self.layout_binding.items.len)));
+
+            // NOTE: undefined is written to in .build()
+            try self.desc_set_update.append(allocator, binding.write_desc_set(@intCast(self.desc_set_update.items.len), undefined));
+        }
+
+        pub fn deinit(self: *@This()) void {
+            self.layout_binding.deinit(allocator);
+            self.desc_set_update.deinit(allocator);
+        }
+
+        pub fn build(self: *@This(), device: *Device) !DescriptorSet {
+            const layouts = [_]vk.DescriptorSetLayout{try device.createDescriptorSetLayout(&.{
+                .flags = .{},
+                .binding_count = @intCast(self.layout_binding.items.len),
+                .p_bindings = self.layout_binding.items.ptr,
+            }, null)};
+            errdefer device.destroyDescriptorSetLayout(layouts[0], null);
+
+            var desc_set: vk.DescriptorSet = undefined;
+            try device.allocateDescriptorSets(&.{
+                .descriptor_pool = self.pool,
+                .descriptor_set_count = @intCast(layouts.len),
+                .p_set_layouts = &layouts,
+            }, @ptrCast(&desc_set));
+
+            // NOTE: overwriting undefined
+            for (self.desc_set_update.items) |*s| {
+                s.dst_set = desc_set;
+            }
+
+            device.updateDescriptorSets(@intCast(self.desc_set_update.items.len), self.desc_set_update.items.ptr, 0, null);
+
+            return .{
+                .set = desc_set,
+                .layout = layouts[0],
+            };
+        }
+    };
+};
 
 pub const ComputePipeline = struct {
     pipeline: vk.Pipeline,
@@ -770,7 +861,7 @@ pub const Swapchain = struct {
         return &self.swap_images[self.image_index];
     }
 
-    pub fn present(self: *Swapchain, cmdbufs: []const vk.CommandBuffer, ctx: *Engine.VulkanContext, uniforms: *UniformBuffer(Uniforms)) !PresentState {
+    pub fn present(self: *Swapchain, cmdbufs: []const vk.CommandBuffer, ctx: *Engine.VulkanContext, uniforms: anytype) !PresentState {
         // Simple method:
         // 1) Acquire next image
         // 2) Wait for and reset fence of the acquired image

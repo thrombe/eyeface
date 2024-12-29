@@ -35,6 +35,10 @@ pub const DescriptorPool = struct {
         };
     }
 
+    pub fn reset(self: *@This(), device: *Device) !void {
+        try device.resetDescriptorPool(self.pool, .{});
+    }
+
     pub fn deinit(self: *@This(), device: *Device) void {
         device.destroyDescriptorPool(self.pool, null);
     }
@@ -47,6 +51,9 @@ pub const DescriptorPool = struct {
 };
 
 pub const DescriptorSet = struct {
+    // not owned
+    pool: vk.DescriptorPool,
+
     set: vk.DescriptorSet,
     layout: vk.DescriptorSetLayout,
 
@@ -54,6 +61,7 @@ pub const DescriptorSet = struct {
         device.destroyDescriptorSetLayout(self.layout, null);
 
         // NOTE: self.set is deinited from it's pool
+        // try device.freeDescriptorSets(self.pool, 1, @ptrCast(&self.set));
     }
 
     pub const Builder = struct {
@@ -96,6 +104,7 @@ pub const DescriptorSet = struct {
             device.updateDescriptorSets(@intCast(self.desc_set_update.items.len), self.desc_set_update.items.ptr, 0, null);
 
             return .{
+                .pool = self.pool,
                 .set = desc_set,
                 .layout = layouts[0],
             };

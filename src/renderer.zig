@@ -12,7 +12,6 @@ const Mat4x4 = math.Mat4x4;
 const transform = @import("transform.zig");
 
 const Engine = @import("engine.zig");
-const c = Engine.c;
 
 const gui = @import("gui.zig");
 const GuiEngine = gui.GuiEngine;
@@ -197,63 +196,10 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     var compute_set = try compute_set_builder.build(device);
     errdefer compute_set.deinit(device);
 
-    const compiler = utils.Glslc.Compiler{ .opt = .fast, .env = .vulkan1_3 };
-    const vert_spv = blk: {
-        const vert: utils.Glslc.Compiler.Code = .{ .path = .{
-            .main = "./src/shader.glsl",
-            .include = &[_][]const u8{},
-            .definitions = &[_][]const u8{ "EYEFACE_RENDER", "EYEFACE_VERT" },
-        } };
-        // _ = compiler.dump_assembly(allocator, &vert);
-        const res = try compiler.compile(
-            allocator,
-            &vert,
-            .spirv,
-            .vertex,
-        );
-        switch (res) {
-            .Err => |msg| {
-                std.debug.print("{s}\n", .{msg.msg});
-                allocator.free(msg.msg);
-                return msg.err;
-            },
-            .Ok => |ok| {
-                errdefer allocator.free(ok);
-                break :blk ok;
-            },
-        }
-    };
-    defer allocator.free(vert_spv);
-    const frag_spv = blk: {
-        const frag: utils.Glslc.Compiler.Code = .{ .path = .{
-            .main = "./src/shader.glsl",
-            .include = &[_][]const u8{},
-            .definitions = &[_][]const u8{ "EYEFACE_RENDER", "EYEFACE_FRAG" },
-        } };
-        // _ = compiler.dump_assembly(allocator, &frag);
-        const res = try compiler.compile(
-            allocator,
-            &frag,
-            .spirv,
-            .fragment,
-        );
-        switch (res) {
-            .Err => |msg| {
-                std.debug.print("{s}\n", .{msg.msg});
-                allocator.free(msg.msg);
-                return msg.err;
-            },
-            .Ok => |ok| {
-                errdefer allocator.free(ok);
-                break :blk ok;
-            },
-        }
-    };
-    defer allocator.free(frag_spv);
-
     var pass = try RenderPass.new(device, .{ .color_attachment_format = swapchain.surface_format.format });
     errdefer pass.deinit(device);
 
+    const compiler = utils.Glslc.Compiler{ .opt = .fast, .env = .vulkan1_3 };
     const compute_pipelines = blk: {
         var pipelines = [_]struct {
             path: [:0]const u8,
@@ -343,6 +289,59 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         }
     }
 
+    const vert_spv = blk: {
+        const vert: utils.Glslc.Compiler.Code = .{ .path = .{
+            .main = "./src/shader.glsl",
+            .include = &[_][]const u8{},
+            .definitions = &[_][]const u8{ "EYEFACE_RENDER", "EYEFACE_VERT" },
+        } };
+        // _ = compiler.dump_assembly(allocator, &vert);
+        const res = try compiler.compile(
+            allocator,
+            &vert,
+            .spirv,
+            .vertex,
+        );
+        switch (res) {
+            .Err => |msg| {
+                std.debug.print("{s}\n", .{msg.msg});
+                allocator.free(msg.msg);
+                return msg.err;
+            },
+            .Ok => |ok| {
+                errdefer allocator.free(ok);
+                break :blk ok;
+            },
+        }
+    };
+    defer allocator.free(vert_spv);
+    const frag_spv = blk: {
+        const frag: utils.Glslc.Compiler.Code = .{ .path = .{
+            .main = "./src/shader.glsl",
+            .include = &[_][]const u8{},
+            .definitions = &[_][]const u8{ "EYEFACE_RENDER", "EYEFACE_FRAG" },
+        } };
+        // _ = compiler.dump_assembly(allocator, &frag);
+        const res = try compiler.compile(
+            allocator,
+            &frag,
+            .spirv,
+            .fragment,
+        );
+        switch (res) {
+            .Err => |msg| {
+                std.debug.print("{s}\n", .{msg.msg});
+                allocator.free(msg.msg);
+                return msg.err;
+            },
+            .Ok => |ok| {
+                errdefer allocator.free(ok);
+                break :blk ok;
+            },
+        }
+    };
+    defer allocator.free(frag_spv);
+
     var pipeline = try GraphicsPipeline.new(device, .{
         .vert = vert_spv,
         .frag = frag_spv,
@@ -400,19 +399,6 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
                     .stencil = 0,
                 },
             },
-        };
-
-        const viewport = vk.Viewport{
-            .x = 0,
-            .y = 0,
-            .width = @floatFromInt(swapchain.extent.width),
-            .height = @floatFromInt(swapchain.extent.height),
-            .min_depth = 0,
-            .max_depth = 1,
-        };
-        const scissor = vk.Rect2D{
-            .offset = .{ .x = 0, .y = 0 },
-            .extent = swapchain.extent,
         };
 
         for (cmdbufs, framebuffers) |cmdbuf, framebuffer| {
@@ -480,8 +466,18 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             //     },
             // }}), 0, null);
 
-            device.cmdSetViewport(cmdbuf, 0, 1, @ptrCast(&viewport));
-            device.cmdSetScissor(cmdbuf, 0, 1, @ptrCast(&scissor));
+            device.cmdSetViewport(cmdbuf, 0, 1, @ptrCast(&vk.Viewport{
+                .x = 0,
+                .y = 0,
+                .width = @floatFromInt(swapchain.extent.width),
+                .height = @floatFromInt(swapchain.extent.height),
+                .min_depth = 0,
+                .max_depth = 1,
+            }));
+            device.cmdSetScissor(cmdbuf, 0, 1, @ptrCast(&vk.Rect2D{
+                .offset = .{ .x = 0, .y = 0 },
+                .extent = swapchain.extent,
+            }));
 
             device.cmdBeginRenderPass(cmdbuf, &.{
                 .render_pass = pass.pass,

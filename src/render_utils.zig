@@ -4,6 +4,9 @@ const vk = @import("vulkan");
 
 const Engine = @import("engine.zig");
 
+const utils = @import("utils.zig");
+const Fuse = utils.Fuse;
+
 const main = @import("main.zig");
 const allocator = main.allocator;
 
@@ -1027,4 +1030,173 @@ pub fn copyBuffer(
     };
     try device.queueSubmit(ctx.graphics_queue.handle, 1, @ptrCast(&si), .null_handle);
     try device.queueWaitIdle(ctx.graphics_queue.handle);
+}
+
+pub fn ShaderCompiler(meta: type, typ: type) type {
+    return struct {
+        pub const ShaderInfo = struct {
+            typ: typ,
+            stage: utils.Glslc.Compiler.Stage,
+            path: [:0]const u8,
+            define: []const []const u8,
+
+            fn compile(self: *const @This(), ctx: *Compiler.Ctx) ![]u32 {
+                const comp = utils.Glslc.Compiler{ .opt = .fast, .env = .vulkan1_3 };
+                const frag: utils.Glslc.Compiler.Code = .{ .path = .{
+                    .main = self.path,
+                    .include = &[_][]const u8{},
+                    .definitions = self.define,
+                } };
+                if (ctx.dump_assembly) blk: {
+                    // TODO: print this on screen instead of console
+                    const res = comp.dump_assembly(allocator, &frag, self.stage) catch {
+                        break :blk;
+                    };
+                    switch (res) {
+                        .Err => |err| {
+                            try ctx.err_chan.send(err.msg);
+                            return err.err;
+                        },
+                        .Ok => {
+                            try ctx.err_chan.send(null);
+                        },
+                    }
+                }
+                const frag_bytes = blk: {
+                    const res = try comp.compile(
+                        allocator,
+                        &frag,
+                        .spirv,
+                        self.stage,
+                    );
+                    switch (res) {
+                        .Err => |err| {
+                            try ctx.err_chan.send(err.msg);
+                            return err.err;
+                        },
+                        .Ok => |ok| {
+                            errdefer allocator.free(ok);
+                            try ctx.err_chan.send(null);
+                            break :blk ok;
+                        },
+                    }
+                };
+                return frag_bytes;
+            }
+        };
+        pub const Compiled = struct {
+            typ: typ,
+            code: []u32,
+            metadata: meta,
+
+            fn deinit(self: *const @This()) void {
+                allocator.free(self.code);
+            }
+        };
+        pub const Compiler = struct {
+            const EventChan = utils.Channel(Compiled);
+            const Ctx = struct {
+                err_chan: utils.Channel(?[]const u8),
+                compiled: utils.Channel(Compiled),
+                shader_fuse: utils.FsFuse,
+                shaders: []ShaderInfo,
+                dump_assembly: bool = false,
+
+                exit: Fuse = .{},
+
+                fn update(self: *@This()) !void {
+                    while (self.shader_fuse.try_recv()) |ev| {
+                        defer ev.deinit();
+
+                        var found_any = false;
+                        for (self.shaders) |s| {
+                            if (std.mem.eql(u8, s.path, ev.real)) {
+                                found_any = true;
+                                const res = try s.compile(self);
+                                try self.compiled.send(.{
+                                    .typ = s.typ,
+                                    .code = res,
+                                    .metadata = try meta.get_metadata(s),
+                                });
+                            }
+                        }
+
+                        if (!found_any) {
+                            std.debug.print("Unknown file update: {s}\n", .{ev.file});
+                        }
+                    }
+                }
+
+                fn deinit(self: *@This()) void {
+                    while (self.err_chan.try_recv()) |err| {
+                        if (err) |er| {
+                            allocator.free(er);
+                        }
+                    }
+                    self.err_chan.deinit();
+
+                    self.compiled.deinit();
+                    self.shader_fuse.deinit();
+
+                    for (self.shaders) |s| {
+                        allocator.free(s.path);
+                    }
+                    allocator.free(self.shaders);
+                }
+            };
+            ctx: *Ctx,
+            thread: std.Thread,
+
+            pub fn init(shader_info: []const ShaderInfo) !@This() {
+                const shader_fuse = try utils.FsFuse.init("./src");
+                errdefer shader_fuse.deinit();
+
+                const shaders = try allocator.dupe(ShaderInfo, shader_info);
+                for (shaders) |*s| {
+                    var buf: [std.fs.MAX_PATH_BYTES:0]u8 = undefined;
+                    const real = try std.fs.cwd().realpath(s.path, &buf);
+                    s.path = try allocator.dupeZ(u8, real);
+                }
+
+                const ctxt = try allocator.create(Ctx);
+                errdefer allocator.destroy(ctxt);
+                ctxt.* = .{
+                    .shaders = shaders,
+                    .shader_fuse = shader_fuse,
+                    .err_chan = try utils.Channel(?[]const u8).init(allocator),
+                    .compiled = try utils.Channel(Compiled).init(allocator),
+                };
+                errdefer ctxt.deinit();
+
+                const Callbacks = struct {
+                    fn spawn(ctx: *Ctx) void {
+                        while (true) {
+                            if (ctx.exit.unfuse()) {
+                                break;
+                            }
+                            ctx.update() catch |e| {
+                                const err = std.fmt.allocPrint(allocator, "{any}", .{e}) catch continue;
+                                ctx.err_chan.send(err) catch continue;
+                            };
+
+                            std.time.sleep(std.time.ns_per_ms * 100);
+                        }
+                    }
+                };
+                const thread = try std.Thread.spawn(.{ .allocator = allocator }, Callbacks.spawn, .{ctxt});
+
+                return .{
+                    .ctx = ctxt,
+                    .thread = thread,
+                };
+            }
+
+            pub fn deinit(self: *@This()) void {
+                _ = self.ctx.exit.fuse();
+                self.thread.join();
+                self.ctx.deinit();
+                allocator.destroy(self.ctx);
+            }
+        };
+    };
 }

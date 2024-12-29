@@ -690,6 +690,44 @@ pub const Buffer = struct {
     }
 };
 
+pub const Framebuffer = struct {
+    bufs: []vk.Framebuffer,
+
+    pub const Args = struct {
+        pass: vk.RenderPass,
+        extent: vk.Extent2D,
+        swap_images: []Swapchain.SwapImage,
+        depth: vk.ImageView,
+    };
+
+    pub fn init(device: *Device, v: Args) !@This() {
+        const framebuffers = try allocator.alloc(vk.Framebuffer, v.swap_images.len);
+        errdefer allocator.free(framebuffers);
+
+        var i: usize = 0;
+        errdefer for (framebuffers[0..i]) |fb| device.destroyFramebuffer(fb, null);
+        for (framebuffers) |*fb| {
+            const attachments = [_]vk.ImageView{ v.swap_images[i].view, v.depth };
+            fb.* = try device.createFramebuffer(&.{
+                .render_pass = v.pass,
+                .attachment_count = attachments.len,
+                .p_attachments = &attachments,
+                .width = v.extent.width,
+                .height = v.extent.height,
+                .layers = 1,
+            }, null);
+            i += 1;
+        }
+
+        return .{ .bufs = framebuffers };
+    }
+
+    pub fn deinit(self: *@This(), device: *Device) void {
+        for (self.bufs) |fb| device.destroyFramebuffer(fb, null);
+        allocator.free(self.bufs);
+    }
+};
+
 pub const Swapchain = struct {
     surface_format: vk.SurfaceFormatKHR,
     present_mode: vk.PresentModeKHR,

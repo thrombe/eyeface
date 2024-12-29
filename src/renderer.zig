@@ -29,6 +29,7 @@ const GraphicsPipeline = render_utils.GraphicsPipeline;
 const ComputePipeline = render_utils.ComputePipeline;
 const DescriptorPool = render_utils.DescriptorPool;
 const DescriptorSet = render_utils.DescriptorSet;
+const Framebuffer = render_utils.Framebuffer;
 
 const main = @import("main.zig");
 const allocator = main.allocator;
@@ -53,7 +54,7 @@ pass: RenderPass,
 compute_pipelines: []ComputePipeline,
 pipeline: GraphicsPipeline,
 // framebuffers are objects containing views of swapchain images
-framebuffers: []vk.Framebuffer,
+framebuffers: Framebuffer,
 command_pool: vk.CommandPool,
 // command buffers are recordings of a bunch of commands that a gpu can execute
 command_buffers: []vk.CommandBuffer,
@@ -350,34 +351,16 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     });
     errdefer pipeline.deinit(device);
 
-    const framebuffers = blk: {
-        const framebuffers = try allocator.alloc(vk.Framebuffer, swapchain.swap_images.len);
-        errdefer allocator.free(framebuffers);
-
-        var i_2: usize = 0;
-        errdefer for (framebuffers[0..i_2]) |fb| device.destroyFramebuffer(fb, null);
-        for (framebuffers) |*fb| {
-            const attachments = [_]vk.ImageView{ swapchain.swap_images[i_2].view, depth_image.view };
-            fb.* = try device.createFramebuffer(&.{
-                .render_pass = pass.pass,
-                .attachment_count = attachments.len,
-                .p_attachments = &attachments,
-                .width = swapchain.extent.width,
-                .height = swapchain.extent.height,
-                .layers = 1,
-            }, null);
-            i_2 += 1;
-        }
-
-        break :blk framebuffers;
-    };
-    errdefer {
-        for (framebuffers) |fb| device.destroyFramebuffer(fb, null);
-        allocator.free(framebuffers);
-    }
+    var framebuffers = try Framebuffer.init(device, .{
+        .pass = pass.pass,
+        .extent = swapchain.extent,
+        .swap_images = swapchain.swap_images,
+        .depth = depth_image.view,
+    });
+    errdefer framebuffers.deinit(device);
 
     const command_buffers = blk: {
-        const cmdbufs = try allocator.alloc(vk.CommandBuffer, framebuffers.len);
+        const cmdbufs = try allocator.alloc(vk.CommandBuffer, framebuffers.bufs.len);
         errdefer allocator.free(cmdbufs);
 
         try device.allocateCommandBuffers(&.{
@@ -401,7 +384,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             },
         };
 
-        for (cmdbufs, framebuffers) |cmdbuf, framebuffer| {
+        for (cmdbufs, framebuffers.bufs) |cmdbuf, framebuffer| {
             try device.beginCommandBuffer(cmdbuf, &.{});
 
             for (compute_pipelines) |p| {
@@ -562,10 +545,7 @@ pub fn deinit(self: *@This(), device: *Device) void {
     }
     defer self.pipeline.deinit(device);
 
-    defer {
-        for (self.framebuffers) |fb| device.destroyFramebuffer(fb, null);
-        allocator.free(self.framebuffers);
-    }
+    defer self.framebuffers.deinit(device);
     defer device.destroyCommandPool(self.command_pool, null);
     defer {
         device.freeCommandBuffers(self.command_pool, @truncate(self.command_buffers.len), self.command_buffers.ptr);

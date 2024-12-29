@@ -30,6 +30,7 @@ const ComputePipeline = render_utils.ComputePipeline;
 const DescriptorPool = render_utils.DescriptorPool;
 const DescriptorSet = render_utils.DescriptorSet;
 const Framebuffer = render_utils.Framebuffer;
+const RenderCmdBuffer = render_utils.RenderCmdBuffer;
 
 const main = @import("main.zig");
 const allocator = main.allocator;
@@ -57,7 +58,7 @@ pipeline: GraphicsPipeline,
 framebuffers: Framebuffer,
 command_pool: vk.CommandPool,
 // command buffers are recordings of a bunch of commands that a gpu can execute
-command_buffers: []vk.CommandBuffer,
+command_buffers: RenderCmdBuffer,
 
 const Device = Engine.VulkanContext.Api.Device;
 pub const Vertex = extern struct {
@@ -359,134 +360,40 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     });
     errdefer framebuffers.deinit(device);
 
-    const command_buffers = blk: {
-        const cmdbufs = try allocator.alloc(vk.CommandBuffer, framebuffers.bufs.len);
-        errdefer allocator.free(cmdbufs);
+    var cmdbuf = try RenderCmdBuffer.init(device, .{ .pool = cmd_pool, .framebuffers = framebuffers.bufs });
+    errdefer cmdbuf.deinit(device);
 
-        try device.allocateCommandBuffers(&.{
-            .command_pool = cmd_pool,
-            .level = .primary,
-            .command_buffer_count = @intCast(cmdbufs.len),
-        }, cmdbufs.ptr);
-        errdefer device.freeCommandBuffers(cmd_pool, @intCast(cmdbufs.len), cmdbufs.ptr);
+    try cmdbuf.begin(device);
+    for (compute_pipelines) |p| {
+        cmdbuf.bindCompute(device, .{ .pipeline = p.pipeline, .desc_set = compute_set.set });
+        var x = p.group_x;
+        while (x >= 1) {
+            cmdbuf.dispatch(device, .{ .x = x, .y = p.group_y, .z = p.group_z });
+            cmdbuf.memBarrier(device, .{});
 
-        const clear = [_]vk.ClearValue{
-            .{
-                .color = .{
-                    .float_32 = app_state.background_color.gamma_correct_inv().to_buf(),
-                },
-            },
-            .{
-                .depth_stencil = .{
-                    .depth = 1.0,
-                    .stencil = 0,
-                },
-            },
-        };
-
-        for (cmdbufs, framebuffers.bufs) |cmdbuf, framebuffer| {
-            try device.beginCommandBuffer(cmdbuf, &.{});
-
-            for (compute_pipelines) |p| {
-                device.cmdBindPipeline(cmdbuf, .compute, p.pipeline.pipeline);
-                device.cmdBindDescriptorSets(cmdbuf, .compute, p.pipeline.layout, 0, 1, @ptrCast(&compute_set.set), 0, null);
-
-                var x = p.group_x;
-                while (x >= 1) {
-                    device.cmdDispatch(cmdbuf, x, p.group_y, p.group_z);
-                    device.cmdPipelineBarrier(cmdbuf, .{
-                        .compute_shader_bit = true,
-                    }, .{
-                        .compute_shader_bit = true,
-                    }, .{}, 1, &[_]vk.MemoryBarrier{.{
-                        .src_access_mask = .{
-                            .shader_read_bit = true,
-                            .shader_write_bit = true,
-                        },
-                        .dst_access_mask = .{
-                            .shader_read_bit = true,
-                            .shader_write_bit = true,
-                        },
-                    }}, 0, null, 0, null);
-
-                    if (x == 1) {
-                        break;
-                    }
-
-                    if (p.reduction_factor) |r| {
-                        x = x / r + @as(u32, @intCast(@intFromBool(x % r > 0)));
-                    } else {
-                        break;
-                    }
-                }
+            if (x == 1) {
+                break;
             }
 
-            // device.cmdPipelineBarrier(cmdbuf, .{
-            //     .compute_shader_bit = true,
-            // }, .{
-            //     .vertex_input_bit = true,
-            //     .vertex_shader_bit = true,
-            // }, .{}, 1, &[_]vk.MemoryBarrier{.{
-            //     .src_access_mask = .{
-            //         .shader_write_bit = true,
-            //     },
-            //     .dst_access_mask = .{
-            //         .shader_read_bit = true,
-            //         .vertex_attribute_read_bit = true,
-            //     },
-            // }}, 1, (&[_]vk.BufferMemoryBarrier{.{
-            //     .src_queue_family_index = ctx.graphics_queue.family,
-            //     .dst_queue_family_index = ctx.graphics_queue.family,
-            //     .buffer = vertex_buffer.buffer,
-            //     .offset = 0,
-            //     .size = vk.WHOLE_SIZE,
-            //     .src_access_mask = .{
-            //         .shader_write_bit = true,
-            //     },
-            //     .dst_access_mask = .{
-            //         .vertex_attribute_read_bit = true,
-            //         .shader_read_bit = true,
-            //     },
-            // }}), 0, null);
-
-            device.cmdSetViewport(cmdbuf, 0, 1, @ptrCast(&vk.Viewport{
-                .x = 0,
-                .y = 0,
-                .width = @floatFromInt(swapchain.extent.width),
-                .height = @floatFromInt(swapchain.extent.height),
-                .min_depth = 0,
-                .max_depth = 1,
-            }));
-            device.cmdSetScissor(cmdbuf, 0, 1, @ptrCast(&vk.Rect2D{
-                .offset = .{ .x = 0, .y = 0 },
-                .extent = swapchain.extent,
-            }));
-
-            device.cmdBeginRenderPass(cmdbuf, &.{
-                .render_pass = pass.pass,
-                .framebuffer = framebuffer,
-                .render_area = .{
-                    .offset = .{ .x = 0, .y = 0 },
-                    .extent = swapchain.extent,
-                },
-                .clear_value_count = clear.len,
-                .p_clear_values = &clear,
-            }, .@"inline");
-
-            device.cmdBindPipeline(cmdbuf, .graphics, pipeline.pipeline);
-            device.cmdBindDescriptorSets(cmdbuf, .graphics, pipeline.layout, 0, 1, @ptrCast(&render_set.set), 0, null);
-            device.cmdDraw(cmdbuf, 6, 1, 0, 0);
-
-            device.cmdEndRenderPass(cmdbuf);
-            try device.endCommandBuffer(cmdbuf);
+            if (p.reduction_factor) |r| {
+                x = x / r + @as(u32, @intCast(@intFromBool(x % r > 0)));
+            } else {
+                break;
+            }
         }
-
-        break :blk cmdbufs;
-    };
-    errdefer {
-        device.freeCommandBuffers(cmd_pool, @truncate(command_buffers.len), command_buffers.ptr);
-        allocator.free(command_buffers);
     }
+    cmdbuf.memBarrier(device, .{ .dst = .{
+        .vertex_input_bit = true,
+        .vertex_shader_bit = true,
+    } });
+    cmdbuf.renderPass(device, .{
+        .extent = swapchain.extent,
+        .pipeline = pipeline,
+        .desc_set = render_set.set,
+        .pass = pass.pass,
+        .clear_color = app_state.background_color.gamma_correct_inv().to_buf(),
+    });
+    try cmdbuf.end(device);
 
     return .{
         .swapchain = swapchain,
@@ -512,7 +419,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         .pipeline = pipeline,
         .framebuffers = framebuffers,
         .command_pool = cmd_pool,
-        .command_buffers = command_buffers,
+        .command_buffers = cmdbuf,
     };
 }
 
@@ -547,10 +454,7 @@ pub fn deinit(self: *@This(), device: *Device) void {
 
     defer self.framebuffers.deinit(device);
     defer device.destroyCommandPool(self.command_pool, null);
-    defer {
-        device.freeCommandBuffers(self.command_pool, @truncate(self.command_buffers.len), self.command_buffers.ptr);
-        allocator.free(self.command_buffers);
-    }
+    defer self.command_buffers.deinit(device);
 }
 
 pub fn present(
@@ -558,7 +462,7 @@ pub fn present(
     gui_renderer: *GuiEngine.GuiRenderer,
     ctx: *Engine.VulkanContext,
 ) !Swapchain.PresentState {
-    const cmdbuf = self.command_buffers[self.swapchain.image_index];
+    const cmdbuf = self.command_buffers.bufs[self.swapchain.image_index];
     const gui_cmdbuf = gui_renderer.cmd_bufs[self.swapchain.image_index];
 
     return self.swapchain.present(&[_]vk.CommandBuffer{ cmdbuf, gui_cmdbuf }, ctx, &self.uniforms) catch |err| switch (err) {

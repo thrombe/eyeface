@@ -690,6 +690,170 @@ pub const Buffer = struct {
     }
 };
 
+pub const RenderCmdBuffer = struct {
+    bufs: []vk.CommandBuffer,
+
+    // borrowed
+    pool: vk.CommandPool,
+    framebuffers: []vk.Framebuffer,
+
+    pub const Args = struct {
+        pool: vk.CommandPool,
+        framebuffers: []vk.Framebuffer,
+    };
+
+    pub fn init(device: *Device, v: Args) !@This() {
+        const cmdbufs = try allocator.alloc(vk.CommandBuffer, v.framebuffers.len);
+        errdefer allocator.free(cmdbufs);
+
+        try device.allocateCommandBuffers(&.{
+            .command_pool = v.pool,
+            .level = .primary,
+            .command_buffer_count = @intCast(cmdbufs.len),
+        }, cmdbufs.ptr);
+        errdefer device.freeCommandBuffers(v.pool, @intCast(cmdbufs.len), cmdbufs.ptr);
+
+        return .{ .bufs = cmdbufs, .pool = v.pool, .framebuffers = v.framebuffers };
+    }
+
+    pub fn deinit(self: *@This(), device: *Device) void {
+        device.freeCommandBuffers(self.pool, @truncate(self.bufs.len), self.bufs.ptr);
+        allocator.free(self.bufs);
+    }
+
+    pub fn begin(self: *@This(), device: *Device) !void {
+        for (self.bufs) |cmdbuf| {
+            try device.beginCommandBuffer(cmdbuf, &.{});
+        }
+    }
+
+    pub fn end(self: *@This(), device: *Device) !void {
+        for (self.bufs) |cmdbuf| {
+            try device.endCommandBuffer(cmdbuf);
+        }
+    }
+
+    pub fn memBarrier(self: *@This(), device: *Device, v: struct {
+        src: vk.PipelineStageFlags = .{
+            .compute_shader_bit = true,
+        },
+        dst: vk.PipelineStageFlags = .{
+            .compute_shader_bit = true,
+        },
+    }) void {
+        for (self.bufs) |cmdbuf| {
+            device.cmdPipelineBarrier(cmdbuf, v.src, v.dst, .{}, 1, &[_]vk.MemoryBarrier{.{
+                .src_access_mask = .{
+                    .shader_read_bit = true,
+                    .shader_write_bit = true,
+                },
+                .dst_access_mask = .{
+                    .shader_read_bit = true,
+                    .shader_write_bit = true,
+                },
+            }}, 0, null, 0, null);
+        }
+
+        // device.cmdPipelineBarrier(cmdbuf, .{
+        //     .compute_shader_bit = true,
+        // }, .{
+        //     .vertex_input_bit = true,
+        //     .vertex_shader_bit = true,
+        // }, .{}, 1, &[_]vk.MemoryBarrier{.{
+        //     .src_access_mask = .{
+        //         .shader_write_bit = true,
+        //     },
+        //     .dst_access_mask = .{
+        //         .shader_read_bit = true,
+        //         .vertex_attribute_read_bit = true,
+        //     },
+        // }}, 1, (&[_]vk.BufferMemoryBarrier{.{
+        //     .src_queue_family_index = ctx.graphics_queue.family,
+        //     .dst_queue_family_index = ctx.graphics_queue.family,
+        //     .buffer = vertex_buffer.buffer,
+        //     .offset = 0,
+        //     .size = vk.WHOLE_SIZE,
+        //     .src_access_mask = .{
+        //         .shader_write_bit = true,
+        //     },
+        //     .dst_access_mask = .{
+        //         .vertex_attribute_read_bit = true,
+        //         .shader_read_bit = true,
+        //     },
+        // }}), 0, null);
+    }
+
+    pub fn renderPass(self: *@This(), device: *Device, v: struct {
+        extent: vk.Extent2D,
+        pipeline: GraphicsPipeline,
+        desc_set: vk.DescriptorSet,
+        pass: vk.RenderPass,
+        clear_color: [4]f32,
+    }) void {
+        const clear = [_]vk.ClearValue{
+            .{
+                .color = .{
+                    .float_32 = v.clear_color,
+                },
+            },
+            .{
+                .depth_stencil = .{
+                    .depth = 1.0,
+                    .stencil = 0,
+                },
+            },
+        };
+
+        for (self.bufs, self.framebuffers) |cmdbuf, framebuffer| {
+            device.cmdSetViewport(cmdbuf, 0, 1, @ptrCast(&vk.Viewport{
+                .x = 0,
+                .y = 0,
+                .width = @floatFromInt(v.extent.width),
+                .height = @floatFromInt(v.extent.height),
+                .min_depth = 0,
+                .max_depth = 1,
+            }));
+            device.cmdSetScissor(cmdbuf, 0, 1, @ptrCast(&vk.Rect2D{
+                .offset = .{ .x = 0, .y = 0 },
+                .extent = v.extent,
+            }));
+
+            device.cmdBeginRenderPass(cmdbuf, &.{
+                .render_pass = v.pass,
+                .framebuffer = framebuffer,
+                .render_area = .{
+                    .offset = .{ .x = 0, .y = 0 },
+                    .extent = v.extent,
+                },
+                .clear_value_count = clear.len,
+                .p_clear_values = &clear,
+            }, .@"inline");
+
+            device.cmdBindPipeline(cmdbuf, .graphics, v.pipeline.pipeline);
+            device.cmdBindDescriptorSets(cmdbuf, .graphics, v.pipeline.layout, 0, 1, @ptrCast(&v.desc_set), 0, null);
+            device.cmdDraw(cmdbuf, 6, 1, 0, 0);
+
+            device.cmdEndRenderPass(cmdbuf);
+        }
+    }
+
+    pub fn bindCompute(self: *@This(), device: *Device, v: struct {
+        pipeline: ComputePipeline,
+        desc_set: vk.DescriptorSet,
+    }) void {
+        for (self.bufs) |cmdbuf| {
+            device.cmdBindPipeline(cmdbuf, .compute, v.pipeline.pipeline);
+            device.cmdBindDescriptorSets(cmdbuf, .compute, v.pipeline.layout, 0, 1, @ptrCast(&v.desc_set), 0, null);
+        }
+    }
+
+    pub fn dispatch(self: *@This(), device: *Device, v: struct { x: u32, y: u32 = 1, z: u32 = 1 }) void {
+        for (self.bufs) |cmdbuf| {
+            device.cmdDispatch(cmdbuf, v.x, v.y, v.z);
+        }
+    }
+};
+
 pub const Framebuffer = struct {
     bufs: []vk.Framebuffer,
 

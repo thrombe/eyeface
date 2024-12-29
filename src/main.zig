@@ -41,7 +41,10 @@ pub fn main() !void {
         var renderer = try Renderer.init(&engine, &app_state);
         defer renderer.deinit(&engine.graphics.device);
 
-        var gui_renderer = try GuiEngine.GuiRenderer.init(&engine, &renderer.swapchain);
+        var dynamic_state = try renderer.dynamicState(&engine, &app_state);
+        defer dynamic_state.deinit(&engine.graphics.device);
+
+        var gui_renderer = try GuiEngine.GuiRenderer.init(&engine, &dynamic_state.swapchain);
         defer gui_renderer.deinit(&engine.graphics.device);
 
         var timer = try std.time.Timer.start();
@@ -58,29 +61,29 @@ pub fn main() !void {
 
             gui_renderer.render_start();
             gui_state.tick(&app_state, lap);
-            try gui_renderer.render_end(&engine.graphics.device, &renderer);
+            try gui_renderer.render_end(&engine.graphics.device, &dynamic_state.swapchain);
 
             // multiple framebuffers => multiple descriptor sets => different buffers
             // big buffers that depends on the last frame's big buffer + multiple framebuffers => me sad
             // so just wait for one frame's queue to be empty before trying to render another frame
             try engine.graphics.device.queueWaitIdle(engine.graphics.graphics_queue.handle);
 
-            const present = try renderer.present(&gui_renderer, &engine.graphics);
+            const present = try renderer.present(&dynamic_state, &gui_renderer, &engine.graphics);
             // IDK: this never triggers :/
             if (present == .suboptimal) {
                 std.debug.print("{any}\n", .{present});
             }
 
             if (engine.window.resize_fuse.unfuse() or present == .suboptimal) {
-                renderer.deinit(&engine.graphics.device);
-                renderer = try Renderer.init(&engine, &app_state);
+                dynamic_state.deinit(&engine.graphics.device);
+                dynamic_state = try renderer.dynamicState(&engine, &app_state);
 
                 gui_renderer.deinit(&engine.graphics.device);
-                gui_renderer = try GuiEngine.GuiRenderer.init(&engine, &renderer.swapchain);
+                gui_renderer = try GuiEngine.GuiRenderer.init(&engine, &dynamic_state.swapchain);
             }
         }
 
-        try renderer.swapchain.waitForAllFences(&engine.graphics.device);
+        try dynamic_state.swapchain.waitForAllFences(&engine.graphics.device);
         try engine.graphics.device.deviceWaitIdle();
     }
 

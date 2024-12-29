@@ -206,12 +206,12 @@ pub const GuiEngine = struct {
             c.ImGui_NewFrame();
         }
 
-        pub fn render_end(self: *@This(), device: *Device, renderer: *Renderer) !void {
+        pub fn render_end(self: *@This(), device: *Device, swapchain: *Swapchain) !void {
             c.ImGui_Render();
 
             const draw_data = c.ImGui_GetDrawData();
 
-            const index = renderer.swapchain.image_index;
+            const index = swapchain.image_index;
             const cmdbuf = self.cmd_bufs[index];
             const framebuffer = self.framebuffers[index];
 
@@ -223,7 +223,7 @@ pub const GuiEngine = struct {
                 .framebuffer = framebuffer,
                 .render_area = .{
                     .offset = .{ .x = 0, .y = 0 },
-                    .extent = renderer.swapchain.extent,
+                    .extent = swapchain.extent,
                 },
             }, .@"inline");
 

@@ -37,7 +37,6 @@ const allocator = main.allocator;
 
 const Renderer = @This();
 
-swapchain: Swapchain,
 uniforms: UniformBuffer(Uniforms),
 points_buffer: Buffer,
 voxel_buffer: Buffer,
@@ -48,30 +47,10 @@ screen_depth_buffer: Buffer,
 reduction_buffer: Buffer,
 descriptor_pool: DescriptorPool,
 compute_descriptor_set: DescriptorSet,
-compute_pipelines: []ComputePipeline,
 // framebuffers are objects containing views of swapchain images
 command_pool: vk.CommandPool,
-// command buffers are recordings of a bunch of commands that a gpu can execute
-command_buffers: CmdBuffer,
 
 const Device = Engine.VulkanContext.Api.Device;
-pub const Vertex = extern struct {
-    const binding_description = vk.VertexInputBindingDescription{
-        .binding = 0,
-        .stride = @sizeOf(Vertex),
-        .input_rate = .vertex,
-    };
-    const attribute_description = [_]vk.VertexInputAttributeDescription{
-        .{
-            .binding = 0,
-            .location = 0,
-            .format = .r32g32b32_sfloat,
-            .offset = @offsetOf(Vertex, "pos"),
-        },
-    };
-
-    pos: [4]f32,
-};
 
 pub const Uniforms = extern struct {
     transforms: TransformSet,
@@ -112,9 +91,6 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     var ctx = &engine.graphics;
     const device = &ctx.device;
 
-    var swapchain = try Swapchain.init(ctx, engine.window.extent);
-    errdefer swapchain.deinit(device);
-
     var uniforms = try UniformBuffer(Uniforms).new(app_state.uniforms(engine.window), ctx);
     errdefer uniforms.deinit(device);
 
@@ -127,8 +103,8 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     errdefer device.destroyCommandPool(cmd_pool, null);
 
     var points_buffer = try Buffer.new_initialized(ctx, .{
-        .size = @sizeOf(Vertex) * app_state.max_points_x_64 * 64,
-    }, Vertex{ .pos = .{ 0, 0, 0, 1 } }, cmd_pool);
+        .size = @sizeOf(f32) * 4 * app_state.max_points_x_64 * 64,
+    }, [4]f32{ 0, 0, 0, 1 }, cmd_pool);
     errdefer points_buffer.deinit(device);
 
     var voxels = try Buffer.new(ctx, .{ .size = @sizeOf(u32) * try std.math.powi(u32, app_state.voxels.max_side, 3) });
@@ -178,6 +154,56 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     try compute_set_builder.add(&reduction);
     var compute_set = try compute_set_builder.build(device);
     errdefer compute_set.deinit(device);
+
+    return .{
+        .uniforms = uniforms,
+        .points_buffer = points_buffer,
+        .voxel_buffer = voxels,
+        .occlusion_buffer = occlusion,
+        .g_buffer = g_buffer,
+        .screen_image = screen,
+        .screen_depth_buffer = screen_depth,
+        .reduction_buffer = reduction,
+        .descriptor_pool = desc_pool,
+        .compute_descriptor_set = compute_set,
+        .command_pool = cmd_pool,
+    };
+}
+
+pub fn deinit(self: *@This(), device: *Device) void {
+    defer self.uniforms.deinit(device);
+    defer self.points_buffer.deinit(device);
+    defer {
+        self.voxel_buffer.deinit(device);
+        self.occlusion_buffer.deinit(device);
+    }
+    defer self.g_buffer.deinit(device);
+
+    defer self.screen_image.deinit(device);
+    defer self.screen_depth_buffer.deinit(device);
+    defer self.reduction_buffer.deinit(device);
+    defer self.compute_descriptor_set.deinit(device);
+    defer self.descriptor_pool.deinit(device);
+}
+
+pub fn present(
+    self: *@This(),
+    dynamic_state: *DynamicState,
+    gui_renderer: *GuiEngine.GuiRenderer,
+    ctx: *Engine.VulkanContext,
+) !Swapchain.PresentState {
+    const cmdbuf = dynamic_state.cmdbuffer.bufs[dynamic_state.swapchain.image_index];
+    const gui_cmdbuf = gui_renderer.cmd_bufs[dynamic_state.swapchain.image_index];
+
+    return dynamic_state.swapchain.present(&[_]vk.CommandBuffer{ cmdbuf, gui_cmdbuf }, ctx, &self.uniforms) catch |err| switch (err) {
+        error.OutOfDateKHR => return .suboptimal,
+        else => |narrow| return narrow,
+    };
+}
+
+pub fn dynamicState(self: *@This(), engine: *Engine, app_state: *AppState) !DynamicState {
+    const ctx = &engine.graphics;
+    const device = &ctx.device;
 
     const compiler = utils.Glslc.Compiler{ .opt = .fast, .env = .vulkan1_3 };
     const compute_pipelines = blk: {
@@ -267,7 +293,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
 
             pipelines[i].pipeline = try ComputePipeline.new(device, .{
                 .shader = compute_spv,
-                .desc_set_layouts = &[_]vk.DescriptorSetLayout{compute_set.layout},
+                .desc_set_layouts = &[_]vk.DescriptorSetLayout{self.compute_descriptor_set.layout},
             });
         }
 
@@ -279,18 +305,21 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         }
     }
 
-    var cmdbuf = try CmdBuffer.init(device, .{ .pool = cmd_pool, .size = swapchain.swap_images.len });
+    var swapchain = try Swapchain.init(ctx, engine.window.extent);
+    errdefer swapchain.deinit(device);
+
+    var cmdbuf = try CmdBuffer.init(device, .{ .pool = self.command_pool, .size = swapchain.swap_images.len });
     errdefer cmdbuf.deinit(device);
 
     try cmdbuf.begin(device);
     cmdbuf.transitionImg(device, .{
-        .image = screen.image,
+        .image = self.screen_image.image,
         .layout = .undefined,
         .new_layout = .general,
         .queue_family_index = ctx.graphics_queue.family,
     });
     for (compute_pipelines) |p| {
-        cmdbuf.bindCompute(device, .{ .pipeline = p.pipeline, .desc_set = compute_set.set });
+        cmdbuf.bindCompute(device, .{ .pipeline = p.pipeline, .desc_set = self.compute_descriptor_set.set });
         var x = p.group_x;
         while (x >= 1) {
             cmdbuf.dispatch(device, .{ .x = x, .y = p.group_y, .z = p.group_z });
@@ -308,7 +337,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         }
     }
     cmdbuf.transitionImg(device, .{
-        .image = screen.image,
+        .image = self.screen_image.image,
         .layout = .undefined,
         .new_layout = .transfer_src_optimal,
         .queue_family_index = ctx.graphics_queue.family,
@@ -320,7 +349,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         .swapchain = &swapchain,
     });
     cmdbuf.blitIntoSwapchain(device, .{
-        .image = screen.image,
+        .image = self.screen_image.image,
         .size = swapchain.extent,
         .swapchain = &swapchain,
     });
@@ -333,17 +362,6 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     try cmdbuf.end(device);
 
     return .{
-        .swapchain = swapchain,
-        .uniforms = uniforms,
-        .points_buffer = points_buffer,
-        .voxel_buffer = voxels,
-        .occlusion_buffer = occlusion,
-        .g_buffer = g_buffer,
-        .screen_image = screen,
-        .screen_depth_buffer = screen_depth,
-        .reduction_buffer = reduction,
-        .descriptor_pool = desc_pool,
-        .compute_descriptor_set = compute_set,
         .compute_pipelines = blk: {
             const pipelines = try allocator.alloc(ComputePipeline, compute_pipelines.len);
             for (compute_pipelines, 0..) |p, i| {
@@ -351,51 +369,31 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             }
             break :blk pipelines;
         },
-        .command_pool = cmd_pool,
-        .command_buffers = cmdbuf,
+        .swapchain = swapchain,
+        .cmdbuffer = cmdbuf,
+        .pool = self.command_pool,
     };
 }
 
-pub fn deinit(self: *@This(), device: *Device) void {
-    try self.swapchain.waitForAllFences(device);
+pub const DynamicState = struct {
+    swapchain: Swapchain,
+    cmdbuffer: CmdBuffer,
+    compute_pipelines: []ComputePipeline,
 
-    defer self.swapchain.deinit(device);
+    // not owned
+    pool: vk.CommandPool,
 
-    defer self.uniforms.deinit(device);
-    defer self.points_buffer.deinit(device);
-    defer {
-        self.voxel_buffer.deinit(device);
-        self.occlusion_buffer.deinit(device);
-    }
-    defer self.g_buffer.deinit(device);
+    pub fn deinit(self: *@This(), device: *Device) void {
+        try self.swapchain.waitForAllFences(device);
 
-    defer self.screen_image.deinit(device);
-    defer self.screen_depth_buffer.deinit(device);
-    defer self.reduction_buffer.deinit(device);
-    defer self.compute_descriptor_set.deinit(device);
-    defer self.descriptor_pool.deinit(device);
+        defer self.swapchain.deinit(device);
+        defer self.cmdbuffer.deinit(device);
 
-    defer {
-        for (self.compute_pipelines) |p| {
-            p.deinit(device);
+        defer {
+            for (self.compute_pipelines) |p| {
+                p.deinit(device);
+            }
+            allocator.free(self.compute_pipelines);
         }
-        allocator.free(self.compute_pipelines);
     }
-
-    defer device.destroyCommandPool(self.command_pool, null);
-    defer self.command_buffers.deinit(device);
-}
-
-pub fn present(
-    self: *@This(),
-    gui_renderer: *GuiEngine.GuiRenderer,
-    ctx: *Engine.VulkanContext,
-) !Swapchain.PresentState {
-    const cmdbuf = self.command_buffers.bufs[self.swapchain.image_index];
-    const gui_cmdbuf = gui_renderer.cmd_bufs[self.swapchain.image_index];
-
-    return self.swapchain.present(&[_]vk.CommandBuffer{ cmdbuf, gui_cmdbuf }, ctx, &self.uniforms) catch |err| switch (err) {
-        error.OutOfDateKHR => return .suboptimal,
-        else => |narrow| return narrow,
-    };
-}
+};

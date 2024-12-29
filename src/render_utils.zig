@@ -25,6 +25,10 @@ pub const DescriptorPool = struct {
                 .type = .storage_buffer,
                 .descriptor_count = 100,
             },
+            .{
+                .type = .storage_image,
+                .descriptor_count = 100,
+            },
         };
         const desc_pool = try device.createDescriptorPool(&.{
             .max_sets = 100,
@@ -438,9 +442,20 @@ pub const RenderPass = struct {
 };
 
 pub const Image = struct {
+    size: u64,
     image: vk.Image,
     memory: vk.DeviceMemory,
     view: vk.ImageView,
+    sampler: vk.Sampler,
+    io: vk.DescriptorImageInfo,
+
+    pub const BufferView = struct {
+        buf: Buffer,
+
+        pub fn deinit(self: *@This(), device: *Device) void {
+            device.destroyBuffer(self.buf.buffer, null);
+        }
+    };
 
     pub const Args = struct {
         img_type: vk.ImageType,
@@ -493,10 +508,37 @@ pub const Image = struct {
         }, null);
         errdefer device.destroyImageView(view, null);
 
+        const sampler = try device.createSampler(&.{
+            .flags = .{},
+            .mag_filter = .nearest,
+            .min_filter = .nearest,
+            .mipmap_mode = .nearest,
+            .address_mode_u = .clamp_to_edge,
+            .address_mode_v = .clamp_to_edge,
+            .address_mode_w = .clamp_to_edge,
+            .mip_lod_bias = 0.0,
+            .anisotropy_enable = 0,
+            .max_anisotropy = 16.0,
+            .compare_enable = 0,
+            .compare_op = .never,
+            .min_lod = 0.0,
+            .max_lod = 1.0,
+            .border_color = .int_opaque_black,
+            .unnormalized_coordinates = 0,
+        }, null);
+        errdefer device.destroySampler(sampler, null);
+
         return .{
             .image = img,
             .memory = memory,
             .view = view,
+            .size = mem_reqs.size,
+            .sampler = sampler,
+            .io = .{
+                .sampler = sampler,
+                .image_view = view,
+                .image_layout = .general,
+            },
         };
     }
 
@@ -504,6 +546,59 @@ pub const Image = struct {
         device.destroyImageView(self.view, null);
         device.freeMemory(self.memory, null);
         device.destroyImage(self.image, null);
+        device.destroySampler(self.sampler, null);
+    }
+
+    pub fn buffer(self: *@This(), device: *Device, v: struct {
+        usage: vk.BufferUsageFlags = .{},
+    }) !BufferView {
+        const buf = try device.createBuffer(&.{
+            .size = self.size,
+            .usage = (vk.BufferUsageFlags{
+                .storage_buffer_bit = true,
+            }).merge(v.usage),
+            .sharing_mode = .exclusive,
+        }, null);
+        errdefer device.destroyBuffer(buf, null);
+
+        try device.bindBufferMemory(buf, self.memory, 0);
+
+        return .{ .buf = .{
+            .buffer = buf,
+            .memory = undefined,
+            .dbi = .{
+                .buffer = buf,
+                .offset = 0,
+                .range = vk.WHOLE_SIZE,
+            },
+        } };
+    }
+
+    pub fn layout_binding(_: *@This(), index: u32) vk.DescriptorSetLayoutBinding {
+        return .{
+            .binding = index,
+            .descriptor_type = .storage_image,
+            .descriptor_count = 1,
+            .stage_flags = .{
+                .vertex_bit = true,
+                .fragment_bit = true,
+                .compute_bit = true,
+            },
+        };
+    }
+
+    pub fn write_desc_set(self: *@This(), binding: u32, desc_set: vk.DescriptorSet) vk.WriteDescriptorSet {
+        return .{
+            .dst_set = desc_set,
+            .dst_binding = binding,
+            .dst_array_element = 0,
+            .descriptor_count = 1,
+            .descriptor_type = .storage_image,
+            .p_image_info = @ptrCast(&self.io),
+            // OOF: ??
+            .p_buffer_info = undefined,
+            .p_texel_buffer_view = undefined,
+        };
     }
 };
 
@@ -695,15 +790,14 @@ pub const RenderCmdBuffer = struct {
 
     // borrowed
     pool: vk.CommandPool,
-    framebuffers: []vk.Framebuffer,
 
     pub const Args = struct {
         pool: vk.CommandPool,
-        framebuffers: []vk.Framebuffer,
+        size: usize,
     };
 
     pub fn init(device: *Device, v: Args) !@This() {
-        const cmdbufs = try allocator.alloc(vk.CommandBuffer, v.framebuffers.len);
+        const cmdbufs = try allocator.alloc(vk.CommandBuffer, v.size);
         errdefer allocator.free(cmdbufs);
 
         try device.allocateCommandBuffers(&.{
@@ -713,7 +807,7 @@ pub const RenderCmdBuffer = struct {
         }, cmdbufs.ptr);
         errdefer device.freeCommandBuffers(v.pool, @intCast(cmdbufs.len), cmdbufs.ptr);
 
-        return .{ .bufs = cmdbufs, .pool = v.pool, .framebuffers = v.framebuffers };
+        return .{ .bufs = cmdbufs, .pool = v.pool };
     }
 
     pub fn deinit(self: *@This(), device: *Device) void {
@@ -789,7 +883,10 @@ pub const RenderCmdBuffer = struct {
         desc_set: vk.DescriptorSet,
         pass: vk.RenderPass,
         clear_color: [4]f32,
+        framebuffers: []vk.Framebuffer,
     }) void {
+        // - [Depth buffering - Vulkan Tutorial](https://vulkan-tutorial.com/Depth_buffering)
+        // - [Setting up depth buffer - Vulkan Guide](https://vkguide.dev/docs/chapter-3/depth_buffer/)
         const clear = [_]vk.ClearValue{
             .{
                 .color = .{
@@ -804,7 +901,7 @@ pub const RenderCmdBuffer = struct {
             },
         };
 
-        for (self.bufs, self.framebuffers) |cmdbuf, framebuffer| {
+        for (self.bufs, v.framebuffers) |cmdbuf, framebuffer| {
             device.cmdSetViewport(cmdbuf, 0, 1, @ptrCast(&vk.Viewport{
                 .x = 0,
                 .y = 0,
@@ -844,6 +941,71 @@ pub const RenderCmdBuffer = struct {
         for (self.bufs) |cmdbuf| {
             device.cmdBindPipeline(cmdbuf, .compute, v.pipeline.pipeline);
             device.cmdBindDescriptorSets(cmdbuf, .compute, v.pipeline.layout, 0, 1, @ptrCast(&v.desc_set), 0, null);
+        }
+    }
+
+    pub fn transitionImg(self: *@This(), device: *Device, v: struct {
+        image: vk.Image,
+        layout: vk.ImageLayout,
+        new_layout: vk.ImageLayout,
+        queue_family_index: u32,
+    }) void {
+        for (self.bufs) |cmdbuf| {
+            transitionImage(cmdbuf, device, v.image, v.layout, v.new_layout, v.queue_family_index);
+        }
+    }
+
+    pub fn transitionSwapchain(self: *@This(), device: *Device, v: struct {
+        layout: vk.ImageLayout,
+        new_layout: vk.ImageLayout,
+        queue_family_index: u32,
+        swapchain: *const Swapchain,
+    }) void {
+        for (self.bufs, v.swapchain.swap_images) |cmdbuf, img| {
+            transitionImage(cmdbuf, device, img.image, v.layout, v.new_layout, v.queue_family_index);
+        }
+    }
+
+    pub fn blitIntoSwapchain(self: *@This(), device: *Device, v: struct {
+        typ: vk.ImageAspectFlags = .{ .color_bit = true },
+        image: vk.Image,
+        size: vk.Extent2D,
+        swapchain: *const Swapchain,
+    }) void {
+        const blit = [_]vk.ImageBlit2{.{
+            .src_subresource = .{
+                .aspect_mask = v.typ,
+                .mip_level = 0,
+                .base_array_layer = 0,
+                .layer_count = 1,
+            },
+            .src_offsets = .{
+                .{ .x = 0, .y = 0, .z = 0 },
+                .{ .x = @intCast(v.size.width), .y = @intCast(v.size.height), .z = 1 },
+            },
+            .dst_subresource = .{
+                .aspect_mask = v.typ,
+                .mip_level = 0,
+                .base_array_layer = 0,
+                .layer_count = 1,
+            },
+            .dst_offsets = .{
+                .{ .x = 0, .y = 0, .z = 0 },
+                .{ .x = @intCast(v.swapchain.extent.width), .y = @intCast(v.swapchain.extent.height), .z = 1 },
+            },
+        }};
+
+        for (self.bufs, v.swapchain.swap_images) |cmdbuf, img| {
+            const blitinfo = vk.BlitImageInfo2{
+                .src_image = v.image,
+                .src_image_layout = .transfer_src_optimal,
+                .dst_image = img.image,
+                .dst_image_layout = .transfer_dst_optimal,
+                .region_count = blit.len,
+                .p_regions = &blit,
+                .filter = .linear,
+            };
+            device.cmdBlitImage2(cmdbuf, &blitinfo);
         }
     }
 
@@ -1193,6 +1355,42 @@ pub const Swapchain = struct {
         }
     };
 };
+
+pub fn transitionImage(
+    cmdbuf: vk.CommandBuffer,
+    device: *Device,
+    image: vk.Image,
+    layout: vk.ImageLayout,
+    new_layout: vk.ImageLayout,
+    queue_family_index: u32,
+) void {
+    const image_barrier = [_]vk.ImageMemoryBarrier2{.{
+        .src_stage_mask = .{ .all_commands_bit = true },
+        .src_access_mask = .{ .memory_write_bit = false },
+        .dst_stage_mask = .{ .all_commands_bit = true },
+        .dst_access_mask = .{
+            .memory_write_bit = false,
+            .memory_read_bit = false,
+        },
+        .old_layout = layout,
+        .new_layout = new_layout,
+        .subresource_range = .{
+            .aspect_mask = .{ .color_bit = true },
+            .base_mip_level = 0,
+            .level_count = 1,
+            .base_array_layer = 0,
+            .layer_count = 1,
+        },
+        .image = image,
+        .src_queue_family_index = queue_family_index,
+        .dst_queue_family_index = queue_family_index,
+    }};
+
+    device.cmdPipelineBarrier2(cmdbuf, &.{
+        .image_memory_barrier_count = image_barrier.len,
+        .p_image_memory_barriers = &image_barrier,
+    });
+}
 
 pub fn copyBuffer(
     ctx: *Engine.VulkanContext,

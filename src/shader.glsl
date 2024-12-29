@@ -63,6 +63,11 @@ int to1D(ivec2 pos, int size) {
     return pos.x + pos.y * size;
 }
 
+ivec2 to2D(int id, int side) {
+    ivec2 pos = ivec2(id % side, (id / side)%side);
+    return pos;
+}
+
 ivec3 to3D(int id, int side) {
     ivec3 pos = ivec3(id % side, (id / side)%side, (id / (side * side))%side);
     return pos;
@@ -88,9 +93,7 @@ struct PixelMeta {
     layout(set = 0, binding = 4) buffer GBuffer {
         PixelMeta gbuffer[];
     };
-    layout(set = 0, binding = 5) buffer ScreenBuffer {
-        vec4 screen[];
-    };
+    layout(set = 0, binding = 5, rgba16) writeonly uniform image2D screen;
     layout(set = 0, binding = 6) buffer DepthBuffer {
         float depth[];
     };
@@ -112,9 +115,7 @@ struct PixelMeta {
     layout(set = 0, binding = 3) readonly buffer GBuffer {
         PixelMeta gbuffer[];
     };
-    layout(set = 0, binding = 4) readonly buffer ScreenBuffer {
-        vec4 screen[];
-    };
+    layout(set = 0, binding = 4, rgba16) readonly uniform image2D screen;
     layout(set = 0, binding = 5) readonly buffer DepthBuffer {
         float depth[];
     };
@@ -161,6 +162,7 @@ float voxelGridSample(ivec3 pos) {
             gbuffer[id].pix_type = 0;
             gbuffer[id].visual_pos = vec3(0.0);
             gbuffer[id].pad = 0.0;
+            imageStore(screen, to2D(int(id), int(ubo.width)), ubo.background_color);
         }
     }
 #endif // EYEFACE_CLEAR_BUFS
@@ -375,40 +377,26 @@ float voxelGridSample(ivec3 pos) {
     }
 #endif // EYEFACE_OCCLUSION
 
-#ifdef EYEFACE_VERT
+#ifdef EYEFACE_DRAW
+    layout (local_size_x = 8, local_size_y = 8) in;
     void main() {
-        vec3 positions[6] = vec3[6](
-            vec3(1.0, 1.0, 0.0),
-            vec3(-1.0, 1.0, 0.0),
-            vec3(1.0, -1.0, 0.0),
-            vec3(1.0, -1.0, 0.0),
-            vec3(-1.0, 1.0, 0.0),
-            vec3(-1.0, -1.0, 0.0)
-        );
+        int id = int(gl_LocalInvocationID.x) + int(gl_LocalInvocationID.y) * int(gl_WorkGroupSize.x) + int(gl_WorkGroupID.x) * 64;
 
-        vec3 pos = positions[gl_VertexIndex];
+        if (ubo.width * ubo.height <= id) {
+            return;
+        }
 
-        gl_Position = vec4(pos, 1.0);
-    }
-#endif // EYEFACE_VERT
+        vec4 f_color = vec4(0.0);
 
-#ifdef EYEFACE_FRAG
-    layout(location = 0) out vec4 f_color;
-
-    void main() {
-        ivec2 pos = ivec2(gl_FragCoord.xy);
-        int index = to1D(pos, int(ubo.width));
-
-        vec3 vpos = gbuffer[index].visual_pos;
+        vec3 vpos = gbuffer[id].visual_pos;
         float dist = length(vpos - ubo.eye.xyz);
         // https://www.desmos.com/calculator/ted75acgr5
         dist = 1.0/(1.0 + exp(-pow(clamp(dist - ubo.depth_offset, 0.0, 30.0), ubo.depth_attenuation) * 6.5 / ubo.depth_range + 3.5));
 
-        int type = gbuffer[index].pix_type;
+        int type = gbuffer[id].pix_type;
         if (type == 2) {
-            vec3 pos = gbuffer[index].grid_pos;
+            vec3 pos = gbuffer[id].grid_pos;
             int side = ubo.voxel_grid_side;
-            int index = to1D(ivec3(pos), side);
 
             // trilinear occlusion sample :/
             ivec3 vi = ivec3(pos);
@@ -442,5 +430,7 @@ float voxelGridSample(ivec3 pos) {
             pow(f_color.z, gamma),
             1.0
         );
+
+        imageStore(screen, to2D(id, int(ubo.width)), f_color);
     }
-#endif // EYEFACE_FRAG
+#endif // EYEFACE_DRAW

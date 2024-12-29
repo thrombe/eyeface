@@ -40,23 +40,16 @@ const Renderer = @This();
 swapchain: Swapchain,
 uniforms: UniformBuffer(Uniforms),
 vertex_buffer: Buffer,
-// - [Depth buffering - Vulkan Tutorial](https://vulkan-tutorial.com/Depth_buffering)
-// - [Setting up depth buffer - Vulkan Guide](https://vkguide.dev/docs/chapter-3/depth_buffer/)
-depth_image: Image,
 voxel_buffer: Buffer,
 occlusion_buffer: Buffer,
 g_buffer: Buffer,
-screen_buffer: Buffer,
+screen_image: Image,
 screen_depth_buffer: Buffer,
 reduction_buffer: Buffer,
 descriptor_pool: DescriptorPool,
-render_descriptor_set: DescriptorSet,
 compute_descriptor_set: DescriptorSet,
-pass: RenderPass,
 compute_pipelines: []ComputePipeline,
-pipeline: GraphicsPipeline,
 // framebuffers are objects containing views of swapchain images
-framebuffers: Framebuffer,
 command_pool: vk.CommandPool,
 // command buffers are recordings of a bunch of commands that a gpu can execute
 command_buffers: RenderCmdBuffer,
@@ -141,26 +134,6 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     }, Vertex{ .pos = .{ 0, 0, 0, 1 } }, cmd_pool);
     errdefer vertex_buffer.deinit(device);
 
-    // apparently you don't need to create more than 1 depth buffer even if you have many
-    // framebuffers
-    var depth_image = try Image.new(ctx, .{
-        .img_type = .@"2d",
-        .img_view_type = .@"2d",
-        .format = .d32_sfloat,
-        .extent = .{
-            .width = engine.window.extent.width,
-            .height = engine.window.extent.height,
-            .depth = 1,
-        },
-        .usage = .{
-            .depth_stencil_attachment_bit = true,
-        },
-        .view_aspect_mask = .{
-            .depth_bit = true,
-        },
-    });
-    errdefer depth_image.deinit(device);
-
     var voxels = try Buffer.new(ctx, .{ .size = @sizeOf(u32) * try std.math.powi(u32, app_state.voxels.max_side, 3) });
     errdefer voxels.deinit(device);
     var occlusion = try Buffer.new(ctx, .{ .size = @sizeOf(u32) * try std.math.powi(u32, app_state.voxels.max_side, 3) });
@@ -169,7 +142,23 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     var g_buffer = try Buffer.new(ctx, .{ .size = @sizeOf(f32) * 4 * 2 * app_state.monitor_rez.width * app_state.monitor_rez.height });
     errdefer g_buffer.deinit(device);
 
-    var screen = try Buffer.new(ctx, .{ .size = @sizeOf(f32) * 4 * app_state.monitor_rez.width * app_state.monitor_rez.height });
+    var screen = try Image.new(ctx, .{
+        .img_type = .@"2d",
+        .img_view_type = .@"2d",
+        .format = .r16g16b16a16_sfloat,
+        .extent = .{
+            .width = app_state.monitor_rez.width,
+            .height = app_state.monitor_rez.height,
+            .depth = 1,
+        },
+        .usage = .{
+            .transfer_src_bit = true,
+            .storage_bit = true,
+        },
+        .view_aspect_mask = .{
+            .color_bit = true,
+        },
+    });
     errdefer screen.deinit(device);
     var screen_depth = try Buffer.new(ctx, .{ .size = @sizeOf(f32) * app_state.monitor_rez.width * app_state.monitor_rez.height });
     errdefer screen_depth.deinit(device);
@@ -179,18 +168,6 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
 
     var desc_pool = try DescriptorPool.new(device);
     errdefer desc_pool.deinit(device);
-
-    var render_set_builder = desc_pool.set_builder();
-    defer render_set_builder.deinit();
-    try render_set_builder.add(&uniforms);
-    try render_set_builder.add(&voxels);
-    try render_set_builder.add(&occlusion);
-    try render_set_builder.add(&g_buffer);
-    try render_set_builder.add(&screen);
-    try render_set_builder.add(&screen_depth);
-    try render_set_builder.add(&reduction);
-    var render_set = try render_set_builder.build(device);
-    errdefer render_set.deinit(device);
 
     var compute_set_builder = desc_pool.set_builder();
     defer compute_set_builder.deinit();
@@ -204,9 +181,6 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     try compute_set_builder.add(&reduction);
     var compute_set = try compute_set_builder.build(device);
     errdefer compute_set.deinit(device);
-
-    var pass = try RenderPass.new(device, .{ .color_attachment_format = swapchain.surface_format.format });
-    errdefer pass.deinit(device);
 
     const compiler = utils.Glslc.Compiler{ .opt = .fast, .env = .vulkan1_3 };
     const compute_pipelines = blk: {
@@ -254,6 +228,14 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
                 .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_OCCLUSION" },
                 .group_x = app_state.voxels.side * app_state.voxels.side * app_state.voxels.side / 64,
             },
+            .{
+                .path = "./src/shader.glsl",
+                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_DRAW" },
+                .group_x = blk1: {
+                    const s = engine.window.extent.width * engine.window.extent.height;
+                    break :blk1 s / 64 + @as(u32, @intCast(@intFromBool(s % 64 > 0)));
+                },
+            },
         };
 
         for (pipelines, 0..) |p, i| {
@@ -298,79 +280,16 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         }
     }
 
-    const vert_spv = blk: {
-        const vert: utils.Glslc.Compiler.Code = .{ .path = .{
-            .main = "./src/shader.glsl",
-            .include = &[_][]const u8{},
-            .definitions = &[_][]const u8{ "EYEFACE_RENDER", "EYEFACE_VERT" },
-        } };
-        // _ = compiler.dump_assembly(allocator, &vert);
-        const res = try compiler.compile(
-            allocator,
-            &vert,
-            .spirv,
-            .vertex,
-        );
-        switch (res) {
-            .Err => |msg| {
-                std.debug.print("{s}\n", .{msg.msg});
-                allocator.free(msg.msg);
-                return msg.err;
-            },
-            .Ok => |ok| {
-                errdefer allocator.free(ok);
-                break :blk ok;
-            },
-        }
-    };
-    defer allocator.free(vert_spv);
-    const frag_spv = blk: {
-        const frag: utils.Glslc.Compiler.Code = .{ .path = .{
-            .main = "./src/shader.glsl",
-            .include = &[_][]const u8{},
-            .definitions = &[_][]const u8{ "EYEFACE_RENDER", "EYEFACE_FRAG" },
-        } };
-        // _ = compiler.dump_assembly(allocator, &frag);
-        const res = try compiler.compile(
-            allocator,
-            &frag,
-            .spirv,
-            .fragment,
-        );
-        switch (res) {
-            .Err => |msg| {
-                std.debug.print("{s}\n", .{msg.msg});
-                allocator.free(msg.msg);
-                return msg.err;
-            },
-            .Ok => |ok| {
-                errdefer allocator.free(ok);
-                break :blk ok;
-            },
-        }
-    };
-    defer allocator.free(frag_spv);
-
-    var pipeline = try GraphicsPipeline.new(device, .{
-        .vert = vert_spv,
-        .frag = frag_spv,
-        .pass = pass.pass,
-        .desc_set_layouts = &[_]vk.DescriptorSetLayout{render_set.layout},
-    });
-    errdefer pipeline.deinit(device);
-
-    var framebuffers = try Framebuffer.init(device, .{
-        .pass = pass.pass,
-        .extent = swapchain.extent,
-        .swap_images = swapchain.swap_images,
-        .depth = depth_image.view,
-    });
-    errdefer framebuffers.deinit(device);
-
-    var cmdbuf = try RenderCmdBuffer.init(device, .{ .pool = cmd_pool, .framebuffers = framebuffers.bufs });
+    var cmdbuf = try RenderCmdBuffer.init(device, .{ .pool = cmd_pool, .size = swapchain.swap_images.len });
     errdefer cmdbuf.deinit(device);
 
     try cmdbuf.begin(device);
+    cmdbuf.transitionImg(device, .{
+        .image = screen.image,
+        .layout = .undefined,
+        .new_layout = .general,
+        .queue_family_index = ctx.graphics_queue.family,
+    });
     for (compute_pipelines) |p| {
         cmdbuf.bindCompute(device, .{ .pipeline = p.pipeline, .desc_set = compute_set.set });
         var x = p.group_x;
@@ -389,16 +308,28 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             }
         }
     }
-    cmdbuf.memBarrier(device, .{ .dst = .{
-        .vertex_input_bit = true,
-        .vertex_shader_bit = true,
-    } });
-    cmdbuf.renderPass(device, .{
-        .extent = swapchain.extent,
-        .pipeline = pipeline,
-        .desc_set = render_set.set,
-        .pass = pass.pass,
-        .clear_color = app_state.background_color.gamma_correct_inv().to_buf(),
+    cmdbuf.transitionImg(device, .{
+        .image = screen.image,
+        .layout = .undefined,
+        .new_layout = .transfer_src_optimal,
+        .queue_family_index = ctx.graphics_queue.family,
+    });
+    cmdbuf.transitionSwapchain(device, .{
+        .layout = .undefined,
+        .new_layout = .transfer_dst_optimal,
+        .queue_family_index = ctx.graphics_queue.family,
+        .swapchain = &swapchain,
+    });
+    cmdbuf.blitIntoSwapchain(device, .{
+        .image = screen.image,
+        .size = swapchain.extent,
+        .swapchain = &swapchain,
+    });
+    cmdbuf.transitionSwapchain(device, .{
+        .layout = .transfer_dst_optimal,
+        .new_layout = .color_attachment_optimal,
+        .queue_family_index = ctx.graphics_queue.family,
+        .swapchain = &swapchain,
     });
     try cmdbuf.end(device);
 
@@ -406,17 +337,14 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         .swapchain = swapchain,
         .uniforms = uniforms,
         .vertex_buffer = vertex_buffer,
-        .depth_image = depth_image,
         .voxel_buffer = voxels,
         .occlusion_buffer = occlusion,
         .g_buffer = g_buffer,
-        .screen_buffer = screen,
+        .screen_image = screen,
         .screen_depth_buffer = screen_depth,
         .reduction_buffer = reduction,
         .descriptor_pool = desc_pool,
-        .render_descriptor_set = render_set,
         .compute_descriptor_set = compute_set,
-        .pass = pass,
         .compute_pipelines = blk: {
             const pipelines = try allocator.alloc(ComputePipeline, compute_pipelines.len);
             for (compute_pipelines, 0..) |p, i| {
@@ -424,8 +352,6 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             }
             break :blk pipelines;
         },
-        .pipeline = pipeline,
-        .framebuffers = framebuffers,
         .command_pool = cmd_pool,
         .command_buffers = cmdbuf,
     };
@@ -438,30 +364,25 @@ pub fn deinit(self: *@This(), device: *Device) void {
 
     defer self.uniforms.deinit(device);
     defer self.vertex_buffer.deinit(device);
-    defer self.depth_image.deinit(device);
     defer {
         self.voxel_buffer.deinit(device);
         self.occlusion_buffer.deinit(device);
     }
     defer self.g_buffer.deinit(device);
 
-    defer self.screen_buffer.deinit(device);
+    defer self.screen_image.deinit(device);
     defer self.screen_depth_buffer.deinit(device);
     defer self.reduction_buffer.deinit(device);
-    defer self.render_descriptor_set.deinit(device);
     defer self.compute_descriptor_set.deinit(device);
     defer self.descriptor_pool.deinit(device);
 
-    defer self.pass.deinit(device);
     defer {
         for (self.compute_pipelines) |p| {
             p.deinit(device);
         }
         allocator.free(self.compute_pipelines);
     }
-    defer self.pipeline.deinit(device);
 
-    defer self.framebuffers.deinit(device);
     defer device.destroyCommandPool(self.command_pool, null);
     defer self.command_buffers.deinit(device);
 }

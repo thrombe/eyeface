@@ -264,6 +264,9 @@ pub const VulkanContext = struct {
                 2;
 
             const device = try vkinstance.createDevice(candidate.pdev, &.{
+                .p_next = @ptrCast(&vk.PhysicalDeviceSynchronization2Features{
+                    .synchronization_2 = vk.TRUE,
+                }),
                 .queue_create_info_count = queue_count,
                 .p_queue_create_infos = &qci,
                 .enabled_extension_count = required_device_extensions.len,

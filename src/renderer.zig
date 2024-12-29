@@ -39,7 +39,7 @@ const Renderer = @This();
 
 swapchain: Swapchain,
 uniforms: UniformBuffer(Uniforms),
-vertex_buffer: Buffer,
+points_buffer: Buffer,
 voxel_buffer: Buffer,
 occlusion_buffer: Buffer,
 g_buffer: Buffer,
@@ -126,13 +126,10 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     }, null);
     errdefer device.destroyCommandPool(cmd_pool, null);
 
-    var vertex_buffer = try Buffer.new_initialized(ctx, .{
-        .size = @sizeOf(Vertex) * app_state.points_x_64 * 64,
-        .usage = .{
-            .vertex_buffer_bit = true,
-        },
+    var points_buffer = try Buffer.new_initialized(ctx, .{
+        .size = @sizeOf(Vertex) * app_state.max_points_x_64 * 64,
     }, Vertex{ .pos = .{ 0, 0, 0, 1 } }, cmd_pool);
-    errdefer vertex_buffer.deinit(device);
+    errdefer points_buffer.deinit(device);
 
     var voxels = try Buffer.new(ctx, .{ .size = @sizeOf(u32) * try std.math.powi(u32, app_state.voxels.max_side, 3) });
     errdefer voxels.deinit(device);
@@ -172,7 +169,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     var compute_set_builder = desc_pool.set_builder();
     defer compute_set_builder.deinit();
     try compute_set_builder.add(&uniforms);
-    try compute_set_builder.add(&vertex_buffer);
+    try compute_set_builder.add(&points_buffer);
     try compute_set_builder.add(&voxels);
     try compute_set_builder.add(&occlusion);
     try compute_set_builder.add(&g_buffer);
@@ -184,6 +181,14 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
 
     const compiler = utils.Glslc.Compiler{ .opt = .fast, .env = .vulkan1_3 };
     const compute_pipelines = blk: {
+        const screen_sze = blk1: {
+            const s = engine.window.extent.width * engine.window.extent.height;
+            break :blk1 s / 64 + @as(u32, @intCast(@intFromBool(s % 64 > 0)));
+        };
+        const voxel_grid_sze = blk1: {
+            const s = try std.math.powi(u32, app_state.voxels.side, 3);
+            break :blk1 s / 64 + @as(u32, @intCast(@intFromBool(s % 64 > 0)));
+        };
         var pipelines = [_]struct {
             path: [:0]const u8,
             define: []const []const u8,
@@ -196,10 +201,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             .{
                 .path = "./src/shader.glsl",
                 .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_CLEAR_BUFS" },
-                .group_x = @max(app_state.voxels.side * app_state.voxels.side * app_state.voxels.side / 64, blk1: {
-                    const s = engine.window.extent.width * engine.window.extent.height;
-                    break :blk1 s / 64 + @as(u32, @intCast(@intFromBool(s % 64 > 0)));
-                }),
+                .group_x = @max(voxel_grid_sze, screen_sze),
             },
             .{
                 .path = "./src/shader.glsl",
@@ -226,15 +228,12 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
             .{
                 .path = "./src/shader.glsl",
                 .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_OCCLUSION" },
-                .group_x = app_state.voxels.side * app_state.voxels.side * app_state.voxels.side / 64,
+                .group_x = voxel_grid_sze,
             },
             .{
                 .path = "./src/shader.glsl",
                 .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_DRAW" },
-                .group_x = blk1: {
-                    const s = engine.window.extent.width * engine.window.extent.height;
-                    break :blk1 s / 64 + @as(u32, @intCast(@intFromBool(s % 64 > 0)));
-                },
+                .group_x = screen_sze,
             },
         };
 
@@ -336,7 +335,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     return .{
         .swapchain = swapchain,
         .uniforms = uniforms,
-        .vertex_buffer = vertex_buffer,
+        .points_buffer = points_buffer,
         .voxel_buffer = voxels,
         .occlusion_buffer = occlusion,
         .g_buffer = g_buffer,
@@ -363,7 +362,7 @@ pub fn deinit(self: *@This(), device: *Device) void {
     defer self.swapchain.deinit(device);
 
     defer self.uniforms.deinit(device);
-    defer self.vertex_buffer.deinit(device);
+    defer self.points_buffer.deinit(device);
     defer {
         self.voxel_buffer.deinit(device);
         self.occlusion_buffer.deinit(device);

@@ -40,10 +40,6 @@ struct Uniforms {
     uint monitor_height;
 };
 
-struct Vertex {
-    vec4 pos;
-};
-
 layout(set = 0, binding = 0) uniform Ubo {
     Uniforms ubo;
 };
@@ -81,8 +77,8 @@ struct PixelMeta {
 };
 
 #ifdef EYEFACE_COMPUTE
-    layout(set = 0, binding = 1) buffer VertexInput {
-        Vertex vertices[];
+    layout(set = 0, binding = 1) buffer PointsBuffer {
+        vec4 points[];
     };
     layout(set = 0, binding = 2) buffer VoxelBuffer {
         uint voxels[];
@@ -150,11 +146,11 @@ float voxelGridSample(ivec3 pos) {
     layout (local_size_x = 8, local_size_y = 8) in;
     void main() {
         uint id = gl_LocalInvocationID.x + gl_LocalInvocationID.y * gl_WorkGroupSize.x + gl_WorkGroupID.x * 64;
-        vec4 pos = vertices[id].pos;
+        vec4 pos = points[id];
 
         uint seed = rand_xorshift(id + ubo.frame * 11335474);
         pos = ubo.transforms[seed % 5] * pos;
-        vertices[id].pos = pos;
+        points[id] = pos;
         if (id < ubo.reduction_points) {
             reduction_buf[id] = pos.xyz;
         }
@@ -265,7 +261,7 @@ float voxelGridSample(ivec3 pos) {
     void main() {
         uint id = gl_LocalInvocationID.x + gl_LocalInvocationID.y * gl_WorkGroupSize.x + gl_WorkGroupID.x * 64;
         // uint id = gl_GlobalInvocationID.x;
-        vec4 pos = vertices[id].pos;
+        vec4 pos = points[id];
 
         uint seed = rand_xorshift(id + ubo.frame * 13324848);
         for (int i=0; i<ubo.iterations; i++) {
@@ -332,7 +328,7 @@ float voxelGridSample(ivec3 pos) {
             }
         }
 
-        // vertices[id].pos = pos;
+        // points[id] = pos;
     }
 #endif // EYEFACE_PROJECT
 

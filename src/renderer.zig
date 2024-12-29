@@ -30,7 +30,7 @@ const ComputePipeline = render_utils.ComputePipeline;
 const DescriptorPool = render_utils.DescriptorPool;
 const DescriptorSet = render_utils.DescriptorSet;
 const Framebuffer = render_utils.Framebuffer;
-const RenderCmdBuffer = render_utils.RenderCmdBuffer;
+const CmdBuffer = render_utils.CmdBuffer;
 
 const main = @import("main.zig");
 const allocator = main.allocator;
@@ -52,7 +52,7 @@ compute_pipelines: []ComputePipeline,
 // framebuffers are objects containing views of swapchain images
 command_pool: vk.CommandPool,
 // command buffers are recordings of a bunch of commands that a gpu can execute
-command_buffers: RenderCmdBuffer,
+command_buffers: CmdBuffer,
 
 const Device = Engine.VulkanContext.Api.Device;
 pub const Vertex = extern struct {
@@ -280,7 +280,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         }
     }
 
-    var cmdbuf = try RenderCmdBuffer.init(device, .{ .pool = cmd_pool, .size = swapchain.swap_images.len });
+    var cmdbuf = try CmdBuffer.init(device, .{ .pool = cmd_pool, .size = swapchain.swap_images.len });
     errdefer cmdbuf.deinit(device);
 
     try cmdbuf.begin(device);

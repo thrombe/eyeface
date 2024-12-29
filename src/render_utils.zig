@@ -785,7 +785,7 @@ pub const Buffer = struct {
     }
 };
 
-pub const RenderCmdBuffer = struct {
+pub const CmdBuffer = struct {
     bufs: []vk.CommandBuffer,
 
     // borrowed

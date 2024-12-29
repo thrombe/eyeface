@@ -94,6 +94,7 @@ struct PixelMeta {
         PixelMeta gbuffer[];
     };
     layout(set = 0, binding = 5, rgba16) writeonly uniform image2D screen;
+    // keeping a separate depth buffer is faster cuz the access patterns of this are much different
     layout(set = 0, binding = 6) buffer DepthBuffer {
         float depth[];
     };
@@ -104,28 +105,6 @@ struct PixelMeta {
         vec3 reduction_buf[];
     };
 #endif // EYEFACE_COMPUTE
-
-#ifdef EYEFACE_RENDER
-    layout(set = 0, binding = 1) readonly buffer VoxelBuffer {
-        uint voxels[];
-    };
-    layout(set = 0, binding = 2) readonly buffer OcclusionBuffer {
-        float occlusion[];
-    };
-    layout(set = 0, binding = 3) readonly buffer GBuffer {
-        PixelMeta gbuffer[];
-    };
-    layout(set = 0, binding = 4, rgba16) readonly uniform image2D screen;
-    layout(set = 0, binding = 5) readonly buffer DepthBuffer {
-        float depth[];
-    };
-    layout(set = 0, binding = 6) readonly buffer VoxelMetadataBuffer {
-        vec4 voxel_grid_min;
-        vec4 voxel_grid_max;
-        vec4 voxel_grid_mid;
-        vec3 reduction_buf[];
-    };
-#endif // EYEFACE_RENDER
 
 bool inGrid(ivec3 pos) {
     if (any(lessThan(pos, ivec3(0)))) {

@@ -127,6 +127,15 @@ pub const Window = struct {
         return .{ .left = left == c.GLFW_PRESS, .x = @intFromFloat(x), .y = @intFromFloat(y) };
     }
 
+    pub fn get_res(self: *@This()) !struct { width: u32, height: u32 } {
+        const monitor = c.glfwGetWindowMonitor(self.handle) orelse c.glfwGetPrimaryMonitor() orelse return error.CouldNotGetMonitor;
+        const mode = c.glfwGetVideoMode(monitor);
+        return .{
+            .width = @intCast(mode.*.width),
+            .height = @intCast(mode.*.height),
+        };
+    }
+
     pub fn should_close(self: *@This()) bool {
         return c.glfwWindowShouldClose(self.handle) == c.GLFW_TRUE;
     }

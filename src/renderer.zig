@@ -108,6 +108,8 @@ pub const Uniforms = extern struct {
     visual_transform_lambda: f32,
     width: u32,
     height: u32,
+    monitor_width: u32,
+    monitor_height: u32,
 
     pub const TransformSet = transform.TransformSet(5);
 };

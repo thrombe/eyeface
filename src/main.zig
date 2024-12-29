@@ -35,7 +35,7 @@ pub fn main() !void {
         var gui_engine = try GuiEngine.init(engine.window);
         defer gui_engine.deinit();
 
-        var app_state = AppState.init(engine.window);
+        var app_state = try AppState.init(engine.window);
         var gui_state = state.GuiState{};
 
         var renderer = try Renderer.init(&engine, &app_state);

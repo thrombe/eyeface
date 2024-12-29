@@ -36,6 +36,8 @@ struct Uniforms {
     float visual_transform_lambda;
     uint width;
     uint height;
+    uint monitor_width;
+    uint monitor_height;
 };
 
 struct Vertex {

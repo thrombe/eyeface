@@ -12,6 +12,7 @@ const Mat4x4 = math.Mat4x4;
 const Renderer = @import("renderer.zig");
 
 pub const AppState = struct {
+    monitor_rez: struct { width: u32, height: u32 },
     pos: Vec4,
     mouse: extern struct { x: i32 = 0, y: i32 = 0, left: bool = false, right: bool = false } = .{},
     pitch: f32 = 0,
@@ -69,15 +70,17 @@ pub const AppState = struct {
         const right = Vec4{ .x = 1 };
     };
 
-    pub fn init(window: *Engine.Window) @This() {
+    pub fn init(window: *Engine.Window) !@This() {
         const pos = Vec4{ .z = -5 };
         const mouse = window.poll_mouse();
+        const sze = try window.get_res();
 
         var rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
 
         const generator = Uniforms.TransformSet.Builder.Generator{};
 
         return .{
+            .monitor_rez = .{ .width = sze.width, .height = sze.height },
             .pos = pos,
             .mouse = .{ .x = mouse.x, .y = mouse.y, .left = mouse.left },
             .transforms = transform.sirpinski_pyramid(),
@@ -191,6 +194,8 @@ pub const AppState = struct {
             .voxel_grid_compensation_perc = self.voxel_grid_compensation_perc,
             .width = window.extent.width,
             .height = window.extent.height,
+            .monitor_width = self.monitor_rez.width,
+            .monitor_height = self.monitor_rez.height,
         };
     }
 };

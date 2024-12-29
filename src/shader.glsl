@@ -85,13 +85,16 @@ struct PixelMeta {
     layout(set = 0, binding = 3) buffer OcclusionBuffer {
         float occlusion[];
     };
-    layout(set = 0, binding = 4) buffer ScreenBuffer {
-        PixelMeta screen[];
+    layout(set = 0, binding = 4) buffer GBuffer {
+        PixelMeta gbuffer[];
     };
-    layout(set = 0, binding = 5) buffer DepthBuffer {
+    layout(set = 0, binding = 5) buffer ScreenBuffer {
+        vec4 screen[];
+    };
+    layout(set = 0, binding = 6) buffer DepthBuffer {
         float depth[];
     };
-    layout(set = 0, binding = 6) buffer VoxelMetadataBuffer {
+    layout(set = 0, binding = 7) buffer VoxelMetadataBuffer {
         vec4 voxel_grid_min;
         vec4 voxel_grid_max;
         vec4 voxel_grid_mid;
@@ -106,13 +109,16 @@ struct PixelMeta {
     layout(set = 0, binding = 2) readonly buffer OcclusionBuffer {
         float occlusion[];
     };
-    layout(set = 0, binding = 3) readonly buffer ScreenBuffer {
-        PixelMeta screen[];
+    layout(set = 0, binding = 3) readonly buffer GBuffer {
+        PixelMeta gbuffer[];
     };
-    layout(set = 0, binding = 4) readonly buffer DepthBuffer {
+    layout(set = 0, binding = 4) readonly buffer ScreenBuffer {
+        vec4 screen[];
+    };
+    layout(set = 0, binding = 5) readonly buffer DepthBuffer {
         float depth[];
     };
-    layout(set = 0, binding = 5) readonly buffer VoxelMetadataBuffer {
+    layout(set = 0, binding = 6) readonly buffer VoxelMetadataBuffer {
         vec4 voxel_grid_min;
         vec4 voxel_grid_max;
         vec4 voxel_grid_mid;
@@ -151,10 +157,10 @@ float voxelGridSample(ivec3 pos) {
         }
         if (id < ubo.width * ubo.height) {
             depth[id] = 1.1;
-            screen[id].grid_pos = vec3(0.0);
-            screen[id].pix_type = 0;
-            screen[id].visual_pos = vec3(0.0);
-            screen[id].pad = 0.0;
+            gbuffer[id].grid_pos = vec3(0.0);
+            gbuffer[id].pix_type = 0;
+            gbuffer[id].visual_pos = vec3(0.0);
+            gbuffer[id].pad = 0.0;
         }
     }
 #endif // EYEFACE_CLEAR_BUFS
@@ -336,12 +342,12 @@ float voxelGridSample(ivec3 pos) {
             grid_pos *= float(side);
             grid_pos += float(side)/2.0;
             // TODO: maybe just store global pos and derive the rest
-            screen[si].grid_pos = grid_pos;
-            screen[si].visual_pos = visual_pos.xyz;
+            gbuffer[si].grid_pos = grid_pos;
+            gbuffer[si].visual_pos = visual_pos.xyz;
             if (inGrid(ivec3(grid_pos))) {
-                screen[si].pix_type = 2;
+                gbuffer[si].pix_type = 2;
             } else {
-                screen[si].pix_type = 1;
+                gbuffer[si].pix_type = 1;
             }
         }
 
@@ -393,14 +399,14 @@ float voxelGridSample(ivec3 pos) {
         ivec2 pos = ivec2(gl_FragCoord.xy);
         int index = to1D(pos, int(ubo.width));
 
-        vec3 vpos = screen[index].visual_pos;
+        vec3 vpos = gbuffer[index].visual_pos;
         float dist = length(vpos - ubo.eye.xyz);
         // https://www.desmos.com/calculator/ted75acgr5
         dist = 1.0/(1.0 + exp(-pow(clamp(dist - ubo.depth_offset, 0.0, 30.0), ubo.depth_attenuation) * 6.5 / ubo.depth_range + 3.5));
 
-        int type = screen[index].pix_type;
+        int type = gbuffer[index].pix_type;
         if (type == 2) {
-            vec3 pos = screen[index].grid_pos;
+            vec3 pos = gbuffer[index].grid_pos;
             int side = ubo.voxel_grid_side;
             int index = to1D(ivec3(pos), side);
 

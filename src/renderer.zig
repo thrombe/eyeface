@@ -45,6 +45,7 @@ vertex_buffer: Buffer,
 depth_image: Image,
 voxel_buffer: Buffer,
 occlusion_buffer: Buffer,
+g_buffer: Buffer,
 screen_buffer: Buffer,
 screen_depth_buffer: Buffer,
 reduction_buffer: Buffer,
@@ -160,18 +161,20 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     });
     errdefer depth_image.deinit(device);
 
-    var voxels = try Buffer.new(ctx, .{ .size = @sizeOf(u32) * try std.math.powi(u32, app_state.voxels.side, 3) });
+    var voxels = try Buffer.new(ctx, .{ .size = @sizeOf(u32) * try std.math.powi(u32, app_state.voxels.max_side, 3) });
     errdefer voxels.deinit(device);
-    var occlusion = try Buffer.new(ctx, .{ .size = @sizeOf(u32) * try std.math.powi(u32, app_state.voxels.side, 3) });
+    var occlusion = try Buffer.new(ctx, .{ .size = @sizeOf(u32) * try std.math.powi(u32, app_state.voxels.max_side, 3) });
     errdefer occlusion.deinit(device);
 
-    var screen = try Buffer.new(ctx, .{ .size = @sizeOf(f32) * 4 * 2 * engine.window.extent.width * engine.window.extent.height });
-    errdefer screen.deinit(device);
+    var g_buffer = try Buffer.new(ctx, .{ .size = @sizeOf(f32) * 4 * 2 * app_state.monitor_rez.width * app_state.monitor_rez.height });
+    errdefer g_buffer.deinit(device);
 
-    var screen_depth = try Buffer.new(ctx, .{ .size = @sizeOf(f32) * engine.window.extent.width * engine.window.extent.height });
+    var screen = try Buffer.new(ctx, .{ .size = @sizeOf(f32) * 4 * app_state.monitor_rez.width * app_state.monitor_rez.height });
+    errdefer screen.deinit(device);
+    var screen_depth = try Buffer.new(ctx, .{ .size = @sizeOf(f32) * app_state.monitor_rez.width * app_state.monitor_rez.height });
     errdefer screen_depth.deinit(device);
 
-    var reduction = try Buffer.new(ctx, .{ .size = @sizeOf(f32) * 4 * 3 + @sizeOf(f32) * 3 * app_state.reduction_points_x_64 * 64 });
+    var reduction = try Buffer.new(ctx, .{ .size = @sizeOf(f32) * 4 * 3 + @sizeOf(f32) * 3 * app_state.max_points_x_64 * 64 });
     errdefer reduction.deinit(device);
 
     var desc_pool = try DescriptorPool.new(device);
@@ -182,6 +185,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     try render_set_builder.add(&uniforms);
     try render_set_builder.add(&voxels);
     try render_set_builder.add(&occlusion);
+    try render_set_builder.add(&g_buffer);
     try render_set_builder.add(&screen);
     try render_set_builder.add(&screen_depth);
     try render_set_builder.add(&reduction);
@@ -194,6 +198,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     try compute_set_builder.add(&vertex_buffer);
     try compute_set_builder.add(&voxels);
     try compute_set_builder.add(&occlusion);
+    try compute_set_builder.add(&g_buffer);
     try compute_set_builder.add(&screen);
     try compute_set_builder.add(&screen_depth);
     try compute_set_builder.add(&reduction);
@@ -404,6 +409,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         .depth_image = depth_image,
         .voxel_buffer = voxels,
         .occlusion_buffer = occlusion,
+        .g_buffer = g_buffer,
         .screen_buffer = screen,
         .screen_depth_buffer = screen_depth,
         .reduction_buffer = reduction,
@@ -437,8 +443,9 @@ pub fn deinit(self: *@This(), device: *Device) void {
         self.voxel_buffer.deinit(device);
         self.occlusion_buffer.deinit(device);
     }
-    defer self.screen_buffer.deinit(device);
+    defer self.g_buffer.deinit(device);
 
+    defer self.screen_buffer.deinit(device);
     defer self.screen_depth_buffer.deinit(device);
     defer self.reduction_buffer.deinit(device);
     defer self.render_descriptor_set.deinit(device);

@@ -36,6 +36,7 @@ pub const AppState = struct {
     pause_t: bool = false,
     pause_generator: bool = false,
     points_x_64: u32 = 50000,
+    max_points_x_64: u32 = 1000000,
     iterations: u32 = 20,
     voxel_grid_compensation_perc: f32 = 0.1,
     voxelization_points_x_64: u32 = 50000,
@@ -56,6 +57,7 @@ pub const AppState = struct {
         center: Vec4 = .{},
         // number of voxels along 1 edge (side ** 3 is the entire volume)
         side: u32 = 300,
+        max_side: u32 = 500,
     } = .{},
 
     rng: std.Random.Xoshiro256,
@@ -241,7 +243,7 @@ pub const GuiState = struct {
         _ = c.ImGui_SliderFloat("Visual Scale", &state.visual_scale, 0.01, 10.0);
         _ = c.ImGui_SliderFloat("Visual Transform Lambda", &state.visual_transform_lambda, 0.0, 25.0);
         _ = c.ImGui_SliderFloat("voxel grid compensation perc", &state.voxel_grid_compensation_perc, -1.0, 1.0);
-        _ = c.ImGui_SliderInt("points (x 64)", @ptrCast(&state.points_x_64), 0, 1000000);
+        _ = c.ImGui_SliderInt("points (x 64)", @ptrCast(&state.points_x_64), 0, @intCast(state.max_points_x_64));
         state.voxelization_points_x_64 = @min(state.voxelization_points_x_64, state.points_x_64);
         _ = c.ImGui_SliderInt("voxelization points (x 64)", @ptrCast(&state.voxelization_points_x_64), 0, @intCast(state.points_x_64));
         state.reduction_points_x_64 = @min(state.reduction_points_x_64, state.points_x_64);
@@ -265,7 +267,7 @@ pub const GuiState = struct {
 
         _ = c.ImGui_DragFloat3("Voxels Center", @ptrCast(&state.voxels.center));
 
-        _ = c.ImGui_SliderInt("Voxel Side", @ptrCast(&state.voxels.side), 1, 500);
+        _ = c.ImGui_SliderInt("Voxel Side", @ptrCast(&state.voxels.side), 1, @intCast(state.voxels.max_side));
     }
 
     fn editVec3Constraints(self: *@This(), comptime label: [:0]const u8, constraints: *Vec3Constraints) void {

@@ -541,7 +541,7 @@ pub const Camera = struct {
         self: *@This(),
         delta: f32,
         dp: struct { dx: i32, dy: i32 },
-        pressed: struct { w: bool, a: bool, s: bool, d: bool },
+        pressed: struct { w: bool, a: bool, s: bool, d: bool, shift: bool },
     ) void {
         self.yaw += @as(f32, @floatFromInt(dp.dx)) * self.sensitivity * delta;
         self.pitch -= @as(f32, @floatFromInt(dp.dy)) * self.sensitivity * delta;
@@ -551,17 +551,22 @@ pub const Camera = struct {
         const fwd = rot.rotate_vector(constants.fwd);
         const right = rot.rotate_vector(constants.right);
 
+        var speed = self.speed;
+        if (pressed.shift) {
+            speed *= 2.0;
+        }
+
         if (pressed.w) {
-            self.pos = self.pos.add(fwd.scale(delta * self.speed));
+            self.pos = self.pos.add(fwd.scale(delta * speed));
         }
         if (pressed.a) {
-            self.pos = self.pos.sub(right.scale(delta * self.speed));
+            self.pos = self.pos.sub(right.scale(delta * speed));
         }
         if (pressed.s) {
-            self.pos = self.pos.sub(fwd.scale(delta * self.speed));
+            self.pos = self.pos.sub(fwd.scale(delta * speed));
         }
         if (pressed.d) {
-            self.pos = self.pos.add(right.scale(delta * self.speed));
+            self.pos = self.pos.add(right.scale(delta * speed));
         }
     }
 

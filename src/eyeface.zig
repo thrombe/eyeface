@@ -505,13 +505,14 @@ pub const AppState = struct {
         const a = window.is_pressed(c.GLFW_KEY_A);
         const s = window.is_pressed(c.GLFW_KEY_S);
         const d = window.is_pressed(c.GLFW_KEY_D);
+        const shift = window.is_pressed(c.GLFW_KEY_LEFT_SHIFT);
         const mouse = window.poll_mouse();
 
         if (mouse.left) {
             self.camera.tick(delta, .{
                 .dx = mouse.x - self.mouse.x,
                 .dy = mouse.y - self.mouse.y,
-            }, .{ .w = w, .a = a, .s = s, .d = d });
+            }, .{ .w = w, .a = a, .s = s, .d = d, .shift = shift });
         }
 
         self.mouse.left = mouse.left;

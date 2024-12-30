@@ -515,3 +515,73 @@ pub const ColorParse = struct {
         @compileError("invalid hex digit");
     }
 };
+
+pub const Camera = struct {
+    pos: Vec4,
+    pitch: f32 = 0,
+    yaw: f32 = 0,
+    speed: f32 = 1.0,
+    sensitivity: f32 = 0.2,
+
+    pub const constants = struct {
+        const pitch_min = -std.math.pi / 2.0 + 0.1;
+        const pitch_max = std.math.pi / 2.0 - 0.1;
+        const up = Vec4{ .y = -1 };
+        const fwd = Vec4{ .z = 1 };
+        const right = Vec4{ .x = 1 };
+    };
+
+    pub fn init(pos: Vec4) @This() {
+        return .{
+            .pos = pos,
+        };
+    }
+
+    pub fn tick(
+        self: *@This(),
+        delta: f32,
+        dp: struct { dx: i32, dy: i32 },
+        pressed: struct { w: bool, a: bool, s: bool, d: bool },
+    ) void {
+        self.yaw += @as(f32, @floatFromInt(dp.dx)) * self.sensitivity * delta;
+        self.pitch -= @as(f32, @floatFromInt(dp.dy)) * self.sensitivity * delta;
+        self.pitch = std.math.clamp(self.pitch, constants.pitch_min, constants.pitch_max);
+
+        const rot = self.rot_quat();
+        const fwd = rot.rotate_vector(constants.fwd);
+        const right = rot.rotate_vector(constants.right);
+
+        if (pressed.w) {
+            self.pos = self.pos.add(fwd.scale(delta * self.speed));
+        }
+        if (pressed.a) {
+            self.pos = self.pos.sub(right.scale(delta * self.speed));
+        }
+        if (pressed.s) {
+            self.pos = self.pos.sub(fwd.scale(delta * self.speed));
+        }
+        if (pressed.d) {
+            self.pos = self.pos.add(right.scale(delta * self.speed));
+        }
+    }
+
+    pub fn world_to_screen_mat(self: *const @This(), width: u32, height: u32) Mat4x4 {
+        const rot = self.rot_quat();
+        const up = rot.rotate_vector(constants.up);
+        const fwd = rot.rotate_vector(constants.fwd);
+
+        const projection_matrix = Mat4x4.perspective_projection(height, width, 0.01, 100.0, std.math.pi / 3.0);
+        const view_matrix = Mat4x4.view(self.pos, fwd, up);
+        const world_to_screen = projection_matrix.mul_mat(view_matrix);
+
+        return world_to_screen;
+    }
+
+    fn rot_quat(self: *const @This()) Vec4 {
+        var rot = Vec4.quat_identity_rot();
+        rot = rot.quat_mul(Vec4.quat_angle_axis(self.pitch, constants.right));
+        rot = rot.quat_mul(Vec4.quat_angle_axis(self.yaw, constants.up));
+        rot = rot.quat_conjugate();
+        return rot;
+    }
+};

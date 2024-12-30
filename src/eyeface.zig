@@ -435,13 +435,8 @@ const ShaderStageManager = struct {
 
 pub const AppState = struct {
     monitor_rez: struct { width: u32, height: u32 },
-    pos: Vec4,
     mouse: extern struct { x: i32 = 0, y: i32 = 0, left: bool = false, right: bool = false } = .{},
-    pitch: f32 = 0,
-    yaw: f32 = 0,
-
-    speed: f32 = 1.0,
-    sensitivity: f32 = 0.2,
+    camera: math.Camera,
 
     frame: u32 = 0,
     time: f32 = 0,
@@ -484,16 +479,7 @@ pub const AppState = struct {
 
     rng: std.Random.Xoshiro256,
 
-    pub const constants = struct {
-        const pitch_min = -std.math.pi / 2.0 + 0.1;
-        const pitch_max = std.math.pi / 2.0 - 0.1;
-        const up = Vec4{ .y = -1 };
-        const fwd = Vec4{ .z = 1 };
-        const right = Vec4{ .x = 1 };
-    };
-
     pub fn init(window: *Engine.Window) !@This() {
-        const pos = Vec4{ .z = -5 };
         const mouse = window.poll_mouse();
         const sze = try window.get_res();
 
@@ -503,7 +489,7 @@ pub const AppState = struct {
 
         return .{
             .monitor_rez = .{ .width = sze.width, .height = sze.height },
-            .pos = pos,
+            .camera = math.Camera.init(Vec4{ .z = -5 }),
             .mouse = .{ .x = mouse.x, .y = mouse.y, .left = mouse.left },
             .transforms = transform.sirpinski_pyramid(),
             .target_transforms = generator.generate(rng.random()),
@@ -522,31 +508,15 @@ pub const AppState = struct {
         const mouse = window.poll_mouse();
 
         if (mouse.left) {
-            self.yaw += @as(f32, @floatFromInt(mouse.x - self.mouse.x)) * self.sensitivity * delta;
-            self.pitch -= @as(f32, @floatFromInt(mouse.y - self.mouse.y)) * self.sensitivity * delta;
-            self.pitch = std.math.clamp(self.pitch, constants.pitch_min, constants.pitch_max);
+            self.camera.tick(delta, .{
+                .dx = mouse.x - self.mouse.x,
+                .dy = mouse.y - self.mouse.y,
+            }, .{ .w = w, .a = a, .s = s, .d = d });
         }
 
         self.mouse.left = mouse.left;
         self.mouse.x = mouse.x;
         self.mouse.y = mouse.y;
-
-        const rot = self.rot_quat();
-        const fwd = rot.rotate_vector(constants.fwd);
-        const right = rot.rotate_vector(constants.right);
-
-        if (w) {
-            self.pos = self.pos.add(fwd.scale(delta * self.speed));
-        }
-        if (a) {
-            self.pos = self.pos.sub(right.scale(delta * self.speed));
-        }
-        if (s) {
-            self.pos = self.pos.sub(fwd.scale(delta * self.speed));
-        }
-        if (d) {
-            self.pos = self.pos.add(right.scale(delta * self.speed));
-        }
 
         self.frame += 1;
         self.time += delta;
@@ -564,28 +534,12 @@ pub const AppState = struct {
         }
     }
 
-    fn rot_quat(self: *const @This()) Vec4 {
-        var rot = Vec4.quat_identity_rot();
-        rot = rot.quat_mul(Vec4.quat_angle_axis(self.pitch, constants.right));
-        rot = rot.quat_mul(Vec4.quat_angle_axis(self.yaw, constants.up));
-        rot = rot.quat_conjugate();
-        return rot;
-    }
-
     pub fn uniforms(self: *const @This(), window: *Engine.Window) Uniforms {
-        const rot = self.rot_quat();
-        const up = rot.rotate_vector(constants.up);
-        const fwd = rot.rotate_vector(constants.fwd);
-
-        const projection_matrix = Mat4x4.perspective_projection(window.extent.height, window.extent.width, 0.01, 100.0, std.math.pi / 3.0);
-        const view_matrix = Mat4x4.view(self.pos, fwd, up);
-        const world_to_screen = projection_matrix.mul_mat(view_matrix);
-
         const transforms = self.transforms.build();
         return .{
             .transforms = transforms,
-            .world_to_screen = world_to_screen,
-            .eye = self.pos,
+            .world_to_screen = self.camera.world_to_screen_mat(window.extent.width, window.extent.height),
+            .eye = self.camera.pos,
             .mouse = .{
                 .x = self.mouse.x,
                 .y = self.mouse.y,
@@ -657,8 +611,8 @@ pub const GuiState = struct {
     fn editState(self: *@This(), state: *AppState) void {
         _ = self;
 
-        _ = c.ImGui_SliderFloat("Speed", &state.speed, 0.1, 10.0);
-        _ = c.ImGui_SliderFloat("Sensitivity", &state.sensitivity, 0.001, 2.0);
+        _ = c.ImGui_SliderFloat("Speed", &state.camera.speed, 0.1, 10.0);
+        _ = c.ImGui_SliderFloat("Sensitivity", &state.camera.sensitivity, 0.001, 2.0);
 
         _ = c.ImGui_SliderFloat("Visual Scale", &state.visual_scale, 0.01, 10.0);
         _ = c.ImGui_SliderFloat("Visual Transform Lambda", &state.visual_transform_lambda, 0.0, 25.0);

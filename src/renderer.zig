@@ -24,12 +24,9 @@ const Swapchain = render_utils.Swapchain;
 const UniformBuffer = render_utils.UniformBuffer;
 const Buffer = render_utils.Buffer;
 const Image = render_utils.Image;
-const RenderPass = render_utils.RenderPass;
-const GraphicsPipeline = render_utils.GraphicsPipeline;
 const ComputePipeline = render_utils.ComputePipeline;
 const DescriptorPool = render_utils.DescriptorPool;
 const DescriptorSet = render_utils.DescriptorSet;
-const Framebuffer = render_utils.Framebuffer;
 const CmdBuffer = render_utils.CmdBuffer;
 
 const main = @import("main.zig");
@@ -107,12 +104,18 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     }, [4]f32{ 0, 0, 0, 1 }, cmd_pool);
     errdefer points_buffer.deinit(device);
 
-    var voxels = try Buffer.new(ctx, .{ .size = @sizeOf(u32) * try std.math.powi(u32, app_state.voxels.max_side, 3) });
+    var voxels = try Buffer.new(ctx, .{
+        .size = @sizeOf(u32) * try std.math.powi(u32, app_state.voxels.max_side, 3),
+    });
     errdefer voxels.deinit(device);
-    var occlusion = try Buffer.new(ctx, .{ .size = @sizeOf(u32) * try std.math.powi(u32, app_state.voxels.max_side, 3) });
+    var occlusion = try Buffer.new(ctx, .{
+        .size = @sizeOf(u32) * try std.math.powi(u32, app_state.voxels.max_side, 3),
+    });
     errdefer occlusion.deinit(device);
 
-    var g_buffer = try Buffer.new(ctx, .{ .size = @sizeOf(f32) * 4 * 2 * app_state.monitor_rez.width * app_state.monitor_rez.height });
+    var g_buffer = try Buffer.new(ctx, .{
+        .size = @sizeOf(f32) * 4 * 2 * app_state.monitor_rez.width * app_state.monitor_rez.height,
+    });
     errdefer g_buffer.deinit(device);
 
     var screen = try Image.new(ctx, .{
@@ -133,10 +136,14 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         },
     });
     errdefer screen.deinit(device);
-    var screen_depth = try Buffer.new(ctx, .{ .size = @sizeOf(f32) * app_state.monitor_rez.width * app_state.monitor_rez.height });
+    var screen_depth = try Buffer.new(ctx, .{
+        .size = @sizeOf(f32) * app_state.monitor_rez.width * app_state.monitor_rez.height,
+    });
     errdefer screen_depth.deinit(device);
 
-    var reduction = try Buffer.new(ctx, .{ .size = @sizeOf(f32) * 4 * 3 + @sizeOf(f32) * 3 * app_state.max_points_x_64 * 64 });
+    var reduction = try Buffer.new(ctx, .{
+        .size = @sizeOf(f32) * 4 * 3 + @sizeOf(f32) * 3 * app_state.max_points_x_64 * 64,
+    });
     errdefer reduction.deinit(device);
 
     var desc_pool = try DescriptorPool.new(device);
@@ -173,12 +180,9 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
 pub fn deinit(self: *@This(), device: *Device) void {
     defer self.uniforms.deinit(device);
     defer self.points_buffer.deinit(device);
-    defer {
-        self.voxel_buffer.deinit(device);
-        self.occlusion_buffer.deinit(device);
-    }
+    defer self.voxel_buffer.deinit(device);
+    defer self.occlusion_buffer.deinit(device);
     defer self.g_buffer.deinit(device);
-
     defer self.screen_image.deinit(device);
     defer self.screen_depth_buffer.deinit(device);
     defer self.reduction_buffer.deinit(device);

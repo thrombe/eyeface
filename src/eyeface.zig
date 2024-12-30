@@ -794,3 +794,137 @@ pub const GuiState = struct {
         c.ImGui_PopID();
     }
 };
+
+// pub const ShaderMeta = union(enum) {
+//     // TODO: these values are pretty much useless
+//     //  - need to get values from State or something
+//     //  - create a function that creates an enum from field names of a struct
+//     //    - filter u32 fields
+//     //    - write a function to take these names and the struct, and grab the field's value
+//     //  - create a simple expression evaluation vm
+//     //    - min, max, +-*/%
+//     pub const Reducer = struct {
+//         group_x: u32,
+//         reduction_factor: u32,
+//     };
+//     pub const Compute = struct {
+//         group_x: u32 = 1,
+//         group_y: u32 = 1,
+//         group_z: u32 = 1,
+//     };
+//     Compute: Compute,
+//     Reducer: Reducer,
+//     Noffin,
+
+//     pub const Typ = enum {
+//         clear_bufs,
+//         iterate,
+//         reduce_min,
+//         reduce_max,
+//         project,
+//         occlusion,
+//         vertex,
+//         fragment,
+//     };
+
+//     pub fn get_metadata(info: render_utils.ShaderCompiler(@This(), Typ).ShaderInfo) !@This() {
+//         if (true) return .Noffin; // :MOUS
+
+//         var file = try std.fs.cwd().openFile(info.path, .{});
+//         defer file.close();
+
+//         var buf: [1024]u8 = undefined;
+//         var buf_reader = std.io.bufferedReader(file.reader());
+//         const reader = buf_reader.reader();
+//         while (try reader.readUntilDelimiterOrEof(&buf, '\n')) |l| {
+//             var line = std.mem.trimLeft(u8, l, " ");
+//             if (!std.mem.startsWith(u8, line, "/// ")) {
+//                 continue;
+//             }
+//             line = std.mem.trimLeft(u8, line[3..], " ");
+
+//             if (try parse_reducer(line, info.typ)) |this| {
+//                 return this;
+//             }
+//             if (try parse_compute(line, info.typ)) |this| {
+//                 return this;
+//             }
+//         }
+
+//         // var lines = std.mem.splitScalar(u8, code, "\n");
+//         // while (lines.next()) |line| {
+//         //     std.debug.print("{s}\n", .{line});
+//         // }
+
+//         return .Noffin;
+//     }
+
+//     fn strip_cmd(l: []const u8, cmd: []const u8, typ: Typ) !?[]const u8 {
+//         var line = l;
+//         if (!std.mem.startsWith(u8, line, cmd)) {
+//             return null;
+//         }
+//         line = std.mem.trimLeft(u8, line[cmd.len..], " ");
+//         if (line[0] != '.') {
+//             return error.MissingTyp;
+//         }
+//         line = line[1..];
+//         const tagname = @tagName(typ);
+//         if (!std.mem.startsWith(u8, line, tagname)) {
+//             return null;
+//         }
+//         line = line[tagname.len..];
+//         line = std.mem.trimLeft(u8, line, " ");
+//         if (line[0] != ',') {
+//             return error.CommaExpected;
+//         }
+//         line = line[1..];
+//         line = std.mem.trimLeft(u8, line, " ");
+
+//         const index = std.mem.indexOf(u8, line, ")") orelse return error.MissingRightParen;
+//         line = line[0..index];
+//         line = std.mem.trimLeft(u8, line, " ");
+//         return line;
+//     }
+
+//     fn parse_args(line: []const u8, comptime num: u32, t: type) ![num]t {
+//         var parts = std.mem.splitScalar(u8, line, ',');
+//         var vals: [num]t = undefined;
+//         for (0..num + 1) |i| {
+//             const part = parts.next() orelse return if (i == 2) vals else error.TooFewArgs;
+//             const v = std.mem.trim(u8, part, " ");
+//             if (v.len == 0 and i == num) {
+//                 return vals;
+//             }
+
+//             if (i == num) {
+//                 return error.TooManyArgs;
+//             }
+
+//             vals[i] = try std.fmt.parseInt(t, v, 0);
+//         }
+
+//         unreachable;
+//     }
+
+//     fn parse_reducer(l: []const u8, typ: Typ) !?@This() {
+//         const cmd = "@reduce(";
+//         const line = try strip_cmd(l, cmd, typ) orelse return null;
+//         const vals = try parse_args(line, 2, u32);
+//         return .{ .Reducer = .{
+//             .group_x = vals[0],
+//             .reduction_factor = vals[1],
+//         } };
+//     }
+
+//     fn parse_compute(l: []const u8, typ: Typ) !?@This() {
+//         const cmd = "@compute(";
+//         const line = try strip_cmd(l, cmd, typ) orelse return null;
+//         const vals = try parse_args(line, 3, u32);
+//         return .{ .Compute = .{
+//             .group_x = vals[0],
+//             .group_y = vals[1],
+//             .group_z = vals[2],
+//         } };
+//     }
+// };

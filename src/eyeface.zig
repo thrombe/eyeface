@@ -275,7 +275,7 @@ pub const RendererState = struct {
 
             for (pipelines, 0..) |p, i| {
                 pipelines[i].pipeline = try ComputePipeline.new(device, .{
-                    .shader = app.stages.shaders.get(p.typ),
+                    .shader = app.stages.shaders.map.get(p.typ).code,
                     .desc_set_layouts = &[_]vk.DescriptorSetLayout{app.compute_descriptor_set.layout},
                 });
             }
@@ -352,7 +352,7 @@ pub const RendererState = struct {
 };
 
 const ShaderStageManager = struct {
-    shaders: StageMap,
+    shaders: CompilerUtils.Stages,
     compiler: CompilerUtils.Compiler,
 
     const ShaderStage = enum {
@@ -364,8 +364,6 @@ const ShaderStageManager = struct {
         occlusion,
         draw,
     };
-    const StageMap = std.EnumArray(ShaderStage, []u32);
-    const StageSet = std.EnumSet(ShaderStage);
     const CompilerUtils = render_utils.ShaderCompiler(struct {
         pub fn get_metadata(_: CompilerUtils.ShaderInfo) !@This() {
             return .{};
@@ -373,7 +371,7 @@ const ShaderStageManager = struct {
     }, ShaderStage);
 
     pub fn init() !@This() {
-        const comp = try CompilerUtils.Compiler.init(&[_]CompilerUtils.ShaderInfo{
+        var comp = try CompilerUtils.Compiler.init(&[_]CompilerUtils.ShaderInfo{
             .{
                 .typ = .clear_bufs,
                 .stage = .compute,
@@ -419,68 +417,19 @@ const ShaderStageManager = struct {
         });
         errdefer comp.deinit();
 
-        var shaders = StageMap.initUndefined();
-        var set = StageSet.initEmpty();
-        errdefer {
-            var it = set.iterator();
-            while (it.next()) |key| {
-                const code = shaders.get(key);
-                allocator.free(code);
-            }
-        }
-
-        const set_full = StageSet.initFull();
-        while (!set.eql(set_full)) {
-            while (comp.ctx.compiled.try_recv()) |shader| {
-                if (set.contains(shader.typ)) {
-                    const old = shaders.get(shader.typ);
-                    allocator.free(old);
-                }
-                shaders.set(shader.typ, shader.code);
-                set.insert(shader.typ);
-            }
-
-            while (comp.ctx.err_chan.try_recv()) |msg_| {
-                if (msg_) |msg| {
-                    defer allocator.free(msg);
-                    std.debug.print("{s}\n", .{msg});
-                }
-            }
-        }
-
         return .{
-            .shaders = shaders,
+            .shaders = try CompilerUtils.Stages.init(&comp),
             .compiler = comp,
         };
     }
 
     pub fn deinit(self: *@This()) void {
-        for (self.shaders.values) |spirv| {
-            allocator.free(spirv);
-        }
+        self.shaders.deinit();
         self.compiler.deinit();
     }
 
     pub fn update(self: *@This()) bool {
-        const can_recv = self.compiler.has_updates();
-
-        while (self.compiler.ctx.compiled.try_recv()) |shader| {
-            const old = self.shaders.get(shader.typ);
-            allocator.free(old);
-
-            self.shaders.set(shader.typ, shader.code);
-        }
-
-        while (self.compiler.ctx.err_chan.try_recv()) |msg_| {
-            if (msg_) |msg| {
-                defer allocator.free(msg);
-                std.debug.print("shader error: {s}\n", .{msg});
-            } else {
-                std.debug.print("no shader errors lesgo :)\n", .{});
-            }
-        }
-
-        return can_recv;
+        return self.shaders.update(&self.compiler);
     }
 };
 

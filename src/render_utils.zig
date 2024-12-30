@@ -1506,10 +1506,74 @@ pub fn copyBuffer(
     try device.queueWaitIdle(ctx.graphics_queue.handle);
 }
 
-pub fn ShaderCompiler(meta: type, typ: type) type {
+pub fn ShaderCompiler(meta: type, stages: type) type {
     return struct {
+        pub const StageMap = std.EnumArray(stages, Compiled);
+        pub const StageSet = std.EnumSet(stages);
+
+        pub const Stages = struct {
+            map: StageMap,
+
+            pub fn init(compiler: *Compiler) !@This() {
+                var shaders = StageMap.initUndefined();
+                var set = StageSet.initEmpty();
+                errdefer {
+                    var it = set.iterator();
+                    while (it.next()) |key| {
+                        shaders.get(key).deinit();
+                    }
+                }
+
+                const set_full = StageSet.initFull();
+                while (!set.eql(set_full)) {
+                    while (compiler.ctx.compiled.try_recv()) |shader| {
+                        if (set.contains(shader.typ)) {
+                            shaders.get(shader.typ).deinit();
+                        }
+                        shaders.set(shader.typ, shader);
+                        set.insert(shader.typ);
+                    }
+
+                    while (compiler.ctx.err_chan.try_recv()) |msg_| {
+                        if (msg_) |msg| {
+                            defer allocator.free(msg);
+                            std.debug.print("{s}\n", .{msg});
+                        }
+                    }
+                }
+                return .{ .map = shaders };
+            }
+
+            pub fn update(self: *@This(), comp: *Compiler) bool {
+                const can_recv = comp.has_updates();
+
+                while (comp.ctx.compiled.try_recv()) |shader| {
+                    self.map.get(shader.typ).deinit();
+
+                    self.map.set(shader.typ, shader);
+                }
+
+                while (comp.ctx.err_chan.try_recv()) |msg_| {
+                    if (msg_) |msg| {
+                        defer allocator.free(msg);
+                        std.debug.print("shader error: {s}\n", .{msg});
+                    } else {
+                        std.debug.print("no shader errors lesgo :)\n", .{});
+                    }
+                }
+
+                return can_recv;
+            }
+
+            pub fn deinit(self: *@This()) void {
+                for (self.map.values) |shader| {
+                    shader.deinit();
+                }
+            }
+        };
+
         pub const ShaderInfo = struct {
-            typ: typ,
+            typ: stages,
             stage: utils.Glslc.Compiler.Stage,
             path: [:0]const u8,
             define: []const []const u8,
@@ -1559,7 +1623,7 @@ pub fn ShaderCompiler(meta: type, typ: type) type {
             }
         };
         pub const Compiled = struct {
-            typ: typ,
+            typ: stages,
             code: []u32,
             metadata: meta,
 

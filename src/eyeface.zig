@@ -30,7 +30,7 @@ const CmdBuffer = render_utils.CmdBuffer;
 const main = @import("main.zig");
 const allocator = main.allocator;
 
-const Renderer = @This();
+pub const App = @This();
 
 uniforms: UniformBuffer(Uniforms),
 points_buffer: Buffer,
@@ -197,7 +197,7 @@ pub fn deinit(self: *@This(), device: *Device) void {
 
 pub fn present(
     self: *@This(),
-    dynamic_state: *DynamicState,
+    dynamic_state: *RendererState,
     gui_renderer: *GuiEngine.GuiRenderer,
     ctx: *Engine.VulkanContext,
 ) !Swapchain.PresentState {
@@ -210,7 +210,7 @@ pub fn present(
     };
 }
 
-pub fn dynamicState(self: *@This(), engine: *Engine, app_state: *AppState) !DynamicState {
+pub fn rendererState(self: *@This(), engine: *Engine, app_state: *AppState) !RendererState {
     const ctx = &engine.graphics;
     const device = &ctx.device;
 
@@ -348,7 +348,7 @@ pub fn dynamicState(self: *@This(), engine: *Engine, app_state: *AppState) !Dyna
     };
 }
 
-pub const DynamicState = struct {
+pub const RendererState = struct {
     swapchain: Swapchain,
     cmdbuffer: CmdBuffer,
     compute_pipelines: []ComputePipeline,
@@ -397,43 +397,43 @@ const ShaderStageManager = struct {
             .{
                 .typ = .clear_bufs,
                 .stage = .compute,
-                .path = "./src/shader.glsl",
+                .path = "./src/eyeface.glsl",
                 .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_CLEAR_BUFS" },
             },
             .{
                 .typ = .iterate,
                 .stage = .compute,
-                .path = "./src/shader.glsl",
+                .path = "./src/eyeface.glsl",
                 .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_ITERATE" },
             },
             .{
                 .typ = .reduce_min,
                 .stage = .compute,
-                .path = "./src/shader.glsl",
+                .path = "./src/eyeface.glsl",
                 .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_REDUCE", "EYEFACE_REDUCE_MIN" },
             },
             .{
                 .typ = .reduce_max,
                 .stage = .compute,
-                .path = "./src/shader.glsl",
+                .path = "./src/eyeface.glsl",
                 .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_REDUCE", "EYEFACE_REDUCE_MAX" },
             },
             .{
                 .typ = .project,
                 .stage = .compute,
-                .path = "./src/shader.glsl",
+                .path = "./src/eyeface.glsl",
                 .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_PROJECT" },
             },
             .{
                 .typ = .occlusion,
                 .stage = .compute,
-                .path = "./src/shader.glsl",
+                .path = "./src/eyeface.glsl",
                 .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_OCCLUSION" },
             },
             .{
                 .typ = .draw,
                 .stage = .compute,
-                .path = "./src/shader.glsl",
+                .path = "./src/eyeface.glsl",
                 .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_DRAW" },
             },
         });
@@ -694,7 +694,7 @@ pub const AppState = struct {
 };
 
 pub const GuiState = struct {
-    const TransformSet = Renderer.Uniforms.TransformSet;
+    const TransformSet = Uniforms.TransformSet;
     const Constraints = TransformSet.Builder.Generator.Constraints;
     const ShearConstraints = TransformSet.Builder.Generator.ShearConstraints;
     const Vec3Constraints = TransformSet.Builder.Generator.Vec3Constraints;

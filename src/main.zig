@@ -17,9 +17,10 @@ const c = Engine.c;
 const gui = @import("gui.zig");
 const GuiEngine = gui.GuiEngine;
 
-const Renderer = @import("renderer.zig");
-const AppState = Renderer.AppState;
-const GuiState = Renderer.GuiState;
+const eyeface = @import("eyeface.zig");
+const App = eyeface.App;
+const AppState = eyeface.AppState;
+const GuiState = eyeface.GuiState;
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 pub const allocator = gpa.allocator();
@@ -37,10 +38,10 @@ pub fn main() !void {
         var app_state = try AppState.init(engine.window);
         var gui_state = GuiState{};
 
-        var renderer = try Renderer.init(&engine, &app_state);
-        defer renderer.deinit(&engine.graphics.device);
+        var app = try App.init(&engine, &app_state);
+        defer app.deinit(&engine.graphics.device);
 
-        var dynamic_state = try renderer.dynamicState(&engine, &app_state);
+        var dynamic_state = try app.rendererState(&engine, &app_state);
         defer dynamic_state.deinit(&engine.graphics.device);
 
         var gui_renderer = try GuiEngine.GuiRenderer.init(&engine, &dynamic_state.swapchain);
@@ -56,7 +57,7 @@ pub fn main() !void {
 
             const lap = timer.lap();
             app_state.tick(lap, engine.window);
-            renderer.uniforms.uniforms = app_state.uniforms(engine.window);
+            app.uniforms.uniforms = app_state.uniforms(engine.window);
 
             gui_renderer.render_start();
             gui_state.tick(&app_state, lap);
@@ -67,15 +68,15 @@ pub fn main() !void {
             // so just wait for one frame's queue to be empty before trying to render another frame
             try engine.graphics.device.queueWaitIdle(engine.graphics.graphics_queue.handle);
 
-            const present = try renderer.present(&dynamic_state, &gui_renderer, &engine.graphics);
+            const present = try app.present(&dynamic_state, &gui_renderer, &engine.graphics);
             // IDK: this never triggers :/
             if (present == .suboptimal) {
                 std.debug.print("{any}\n", .{present});
             }
 
-            if (engine.window.resize_fuse.unfuse() or present == .suboptimal or renderer.stages.update()) {
+            if (engine.window.resize_fuse.unfuse() or present == .suboptimal or app.stages.update()) {
                 dynamic_state.deinit(&engine.graphics.device);
-                dynamic_state = try renderer.dynamicState(&engine, &app_state);
+                dynamic_state = try app.rendererState(&engine, &app_state);
 
                 gui_renderer.deinit(&engine.graphics.device);
                 gui_renderer = try GuiEngine.GuiRenderer.init(&engine, &dynamic_state.swapchain);

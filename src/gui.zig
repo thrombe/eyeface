@@ -15,8 +15,6 @@ const Mat4x4 = math.Mat4x4;
 const render_utils = @import("render_utils.zig");
 const Swapchain = render_utils.Swapchain;
 
-const Renderer = @import("renderer.zig");
-
 pub const GuiEngine = struct {
     ctx: *c.ImGuiContext,
 

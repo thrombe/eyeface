@@ -210,144 +210,6 @@ pub fn present(
     };
 }
 
-pub fn rendererState(self: *@This(), engine: *Engine, app_state: *AppState) !RendererState {
-    const ctx = &engine.graphics;
-    const device = &ctx.device;
-
-    const compute_pipelines = blk: {
-        const screen_sze = blk1: {
-            const s = engine.window.extent.width * engine.window.extent.height;
-            break :blk1 s / 64 + @as(u32, @intCast(@intFromBool(s % 64 > 0)));
-        };
-        const voxel_grid_sze = blk1: {
-            const s = try std.math.powi(u32, app_state.voxels.side, 3);
-            break :blk1 s / 64 + @as(u32, @intCast(@intFromBool(s % 64 > 0)));
-        };
-        var pipelines = [_]struct {
-            typ: ShaderStageManager.ShaderStage,
-            group_x: u32 = 1,
-            group_y: u32 = 1,
-            group_z: u32 = 1,
-            reduction_factor: ?u32 = null,
-            pipeline: ComputePipeline = undefined,
-        }{
-            .{
-                .typ = .clear_bufs,
-                .group_x = @max(voxel_grid_sze, screen_sze),
-            },
-            .{
-                .typ = .iterate,
-                .group_x = app_state.points_x_64,
-            },
-            .{
-                .typ = .reduce_min,
-                .reduction_factor = 256,
-                .group_x = app_state.reduction_points_x_64,
-            },
-            .{
-                .typ = .reduce_max,
-                .reduction_factor = 256,
-                .group_x = app_state.reduction_points_x_64,
-            },
-            .{
-                .typ = .project,
-                .group_x = app_state.points_x_64,
-            },
-            .{
-                .typ = .occlusion,
-                .group_x = voxel_grid_sze,
-            },
-            .{
-                .typ = .draw,
-                .group_x = screen_sze,
-            },
-        };
-
-        for (pipelines, 0..) |p, i| {
-            pipelines[i].pipeline = try ComputePipeline.new(device, .{
-                .shader = self.stages.shaders.get(p.typ),
-                .desc_set_layouts = &[_]vk.DescriptorSetLayout{self.compute_descriptor_set.layout},
-            });
-        }
-
-        break :blk pipelines;
-    };
-    errdefer {
-        for (compute_pipelines) |p| {
-            p.pipeline.deinit(device);
-        }
-    }
-
-    var swapchain = try Swapchain.init(ctx, engine.window.extent);
-    errdefer swapchain.deinit(device);
-
-    var cmdbuf = try CmdBuffer.init(device, .{ .pool = self.command_pool, .size = swapchain.swap_images.len });
-    errdefer cmdbuf.deinit(device);
-
-    try cmdbuf.begin(device);
-    cmdbuf.transitionImg(device, .{
-        .image = self.screen_image.image,
-        .layout = .undefined,
-        .new_layout = .general,
-        .queue_family_index = ctx.graphics_queue.family,
-    });
-    for (compute_pipelines) |p| {
-        cmdbuf.bindCompute(device, .{ .pipeline = p.pipeline, .desc_set = self.compute_descriptor_set.set });
-        var x = p.group_x;
-        while (x >= 1) {
-            cmdbuf.dispatch(device, .{ .x = x, .y = p.group_y, .z = p.group_z });
-            cmdbuf.memBarrier(device, .{});
-
-            if (x == 1) {
-                break;
-            }
-
-            if (p.reduction_factor) |r| {
-                x = x / r + @as(u32, @intCast(@intFromBool(x % r > 0)));
-            } else {
-                break;
-            }
-        }
-    }
-    cmdbuf.transitionImg(device, .{
-        .image = self.screen_image.image,
-        .layout = .undefined,
-        .new_layout = .transfer_src_optimal,
-        .queue_family_index = ctx.graphics_queue.family,
-    });
-    cmdbuf.transitionSwapchain(device, .{
-        .layout = .undefined,
-        .new_layout = .transfer_dst_optimal,
-        .queue_family_index = ctx.graphics_queue.family,
-        .swapchain = &swapchain,
-    });
-    cmdbuf.blitIntoSwapchain(device, .{
-        .image = self.screen_image.image,
-        .size = swapchain.extent,
-        .swapchain = &swapchain,
-    });
-    cmdbuf.transitionSwapchain(device, .{
-        .layout = .transfer_dst_optimal,
-        .new_layout = .color_attachment_optimal,
-        .queue_family_index = ctx.graphics_queue.family,
-        .swapchain = &swapchain,
-    });
-    try cmdbuf.end(device);
-
-    return .{
-        .compute_pipelines = blk: {
-            const pipelines = try allocator.alloc(ComputePipeline, compute_pipelines.len);
-            for (compute_pipelines, 0..) |p, i| {
-                pipelines[i] = p.pipeline;
-            }
-            break :blk pipelines;
-        },
-        .swapchain = swapchain,
-        .cmdbuffer = cmdbuf,
-        .pool = self.command_pool,
-    };
-}
-
 pub const RendererState = struct {
     swapchain: Swapchain,
     cmdbuffer: CmdBuffer,
@@ -355,6 +217,144 @@ pub const RendererState = struct {
 
     // not owned
     pool: vk.CommandPool,
+
+    pub fn init(app: *App, engine: *Engine, app_state: *AppState) !@This() {
+        const ctx = &engine.graphics;
+        const device = &ctx.device;
+
+        const compute_pipelines = blk: {
+            const screen_sze = blk1: {
+                const s = engine.window.extent.width * engine.window.extent.height;
+                break :blk1 s / 64 + @as(u32, @intCast(@intFromBool(s % 64 > 0)));
+            };
+            const voxel_grid_sze = blk1: {
+                const s = try std.math.powi(u32, app_state.voxels.side, 3);
+                break :blk1 s / 64 + @as(u32, @intCast(@intFromBool(s % 64 > 0)));
+            };
+            var pipelines = [_]struct {
+                typ: ShaderStageManager.ShaderStage,
+                group_x: u32 = 1,
+                group_y: u32 = 1,
+                group_z: u32 = 1,
+                reduction_factor: ?u32 = null,
+                pipeline: ComputePipeline = undefined,
+            }{
+                .{
+                    .typ = .clear_bufs,
+                    .group_x = @max(voxel_grid_sze, screen_sze),
+                },
+                .{
+                    .typ = .iterate,
+                    .group_x = app_state.points_x_64,
+                },
+                .{
+                    .typ = .reduce_min,
+                    .reduction_factor = 256,
+                    .group_x = app_state.reduction_points_x_64,
+                },
+                .{
+                    .typ = .reduce_max,
+                    .reduction_factor = 256,
+                    .group_x = app_state.reduction_points_x_64,
+                },
+                .{
+                    .typ = .project,
+                    .group_x = app_state.points_x_64,
+                },
+                .{
+                    .typ = .occlusion,
+                    .group_x = voxel_grid_sze,
+                },
+                .{
+                    .typ = .draw,
+                    .group_x = screen_sze,
+                },
+            };
+
+            for (pipelines, 0..) |p, i| {
+                pipelines[i].pipeline = try ComputePipeline.new(device, .{
+                    .shader = app.stages.shaders.get(p.typ),
+                    .desc_set_layouts = &[_]vk.DescriptorSetLayout{app.compute_descriptor_set.layout},
+                });
+            }
+
+            break :blk pipelines;
+        };
+        errdefer {
+            for (compute_pipelines) |p| {
+                p.pipeline.deinit(device);
+            }
+        }
+
+        var swapchain = try Swapchain.init(ctx, engine.window.extent);
+        errdefer swapchain.deinit(device);
+
+        var cmdbuf = try CmdBuffer.init(device, .{ .pool = app.command_pool, .size = swapchain.swap_images.len });
+        errdefer cmdbuf.deinit(device);
+
+        try cmdbuf.begin(device);
+        cmdbuf.transitionImg(device, .{
+            .image = app.screen_image.image,
+            .layout = .undefined,
+            .new_layout = .general,
+            .queue_family_index = ctx.graphics_queue.family,
+        });
+        for (compute_pipelines) |p| {
+            cmdbuf.bindCompute(device, .{ .pipeline = p.pipeline, .desc_set = app.compute_descriptor_set.set });
+            var x = p.group_x;
+            while (x >= 1) {
+                cmdbuf.dispatch(device, .{ .x = x, .y = p.group_y, .z = p.group_z });
+                cmdbuf.memBarrier(device, .{});
+
+                if (x == 1) {
+                    break;
+                }
+
+                if (p.reduction_factor) |r| {
+                    x = x / r + @as(u32, @intCast(@intFromBool(x % r > 0)));
+                } else {
+                    break;
+                }
+            }
+        }
+        cmdbuf.transitionImg(device, .{
+            .image = app.screen_image.image,
+            .layout = .undefined,
+            .new_layout = .transfer_src_optimal,
+            .queue_family_index = ctx.graphics_queue.family,
+        });
+        cmdbuf.transitionSwapchain(device, .{
+            .layout = .undefined,
+            .new_layout = .transfer_dst_optimal,
+            .queue_family_index = ctx.graphics_queue.family,
+            .swapchain = &swapchain,
+        });
+        cmdbuf.blitIntoSwapchain(device, .{
+            .image = app.screen_image.image,
+            .size = swapchain.extent,
+            .swapchain = &swapchain,
+        });
+        cmdbuf.transitionSwapchain(device, .{
+            .layout = .transfer_dst_optimal,
+            .new_layout = .color_attachment_optimal,
+            .queue_family_index = ctx.graphics_queue.family,
+            .swapchain = &swapchain,
+        });
+        try cmdbuf.end(device);
+
+        return .{
+            .compute_pipelines = blk: {
+                const pipelines = try allocator.alloc(ComputePipeline, compute_pipelines.len);
+                for (compute_pipelines, 0..) |p, i| {
+                    pipelines[i] = p.pipeline;
+                }
+                break :blk pipelines;
+            },
+            .swapchain = swapchain,
+            .cmdbuffer = cmdbuf,
+            .pool = app.command_pool,
+        };
+    }
 
     pub fn deinit(self: *@This(), device: *Device) void {
         try self.swapchain.waitForAllFences(device);

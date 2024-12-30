@@ -46,6 +46,7 @@ descriptor_pool: DescriptorPool,
 compute_descriptor_set: DescriptorSet,
 // framebuffers are objects containing views of swapchain images
 command_pool: vk.CommandPool,
+stages: ShaderStageManager,
 
 const Device = Engine.VulkanContext.Api.Device;
 
@@ -88,9 +89,6 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     var ctx = &engine.graphics;
     const device = &ctx.device;
 
-    var uniforms = try UniformBuffer(Uniforms).new(app_state.uniforms(engine.window), ctx);
-    errdefer uniforms.deinit(device);
-
     const cmd_pool = try device.createCommandPool(&.{
         .queue_family_index = ctx.graphics_queue.family,
         .flags = .{
@@ -98,6 +96,9 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         },
     }, null);
     errdefer device.destroyCommandPool(cmd_pool, null);
+
+    var uniforms = try UniformBuffer(Uniforms).new(app_state.uniforms(engine.window), ctx);
+    errdefer uniforms.deinit(device);
 
     var points_buffer = try Buffer.new_initialized(ctx, .{
         .size = @sizeOf(f32) * 4 * app_state.max_points_x_64 * 64,
@@ -162,6 +163,9 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     var compute_set = try compute_set_builder.build(device);
     errdefer compute_set.deinit(device);
 
+    const stages = try ShaderStageManager.init();
+    errdefer stages.deinit();
+
     return .{
         .uniforms = uniforms,
         .points_buffer = points_buffer,
@@ -174,10 +178,12 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         .descriptor_pool = desc_pool,
         .compute_descriptor_set = compute_set,
         .command_pool = cmd_pool,
+        .stages = stages,
     };
 }
 
 pub fn deinit(self: *@This(), device: *Device) void {
+    defer device.destroyCommandPool(self.command_pool, null);
     defer self.uniforms.deinit(device);
     defer self.points_buffer.deinit(device);
     defer self.voxel_buffer.deinit(device);
@@ -188,6 +194,7 @@ pub fn deinit(self: *@This(), device: *Device) void {
     defer self.reduction_buffer.deinit(device);
     defer self.compute_descriptor_set.deinit(device);
     defer self.descriptor_pool.deinit(device);
+    defer self.stages.deinit();
 }
 
 pub fn present(
@@ -209,7 +216,6 @@ pub fn dynamicState(self: *@This(), engine: *Engine, app_state: *AppState) !Dyna
     const ctx = &engine.graphics;
     const device = &ctx.device;
 
-    const compiler = utils.Glslc.Compiler{ .opt = .fast, .env = .vulkan1_3 };
     const compute_pipelines = blk: {
         const screen_sze = blk1: {
             const s = engine.window.extent.width * engine.window.extent.height;
@@ -220,8 +226,7 @@ pub fn dynamicState(self: *@This(), engine: *Engine, app_state: *AppState) !Dyna
             break :blk1 s / 64 + @as(u32, @intCast(@intFromBool(s % 64 > 0)));
         };
         var pipelines = [_]struct {
-            path: [:0]const u8,
-            define: []const []const u8,
+            typ: ShaderStageManager.ShaderStage,
             group_x: u32 = 1,
             group_y: u32 = 1,
             group_z: u32 = 1,
@@ -229,74 +234,40 @@ pub fn dynamicState(self: *@This(), engine: *Engine, app_state: *AppState) !Dyna
             pipeline: ComputePipeline = undefined,
         }{
             .{
-                .path = "./src/shader.glsl",
-                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_CLEAR_BUFS" },
+                .typ = .clear_bufs,
                 .group_x = @max(voxel_grid_sze, screen_sze),
             },
             .{
-                .path = "./src/shader.glsl",
-                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_ITERATE" },
+                .typ = .iterate,
                 .group_x = app_state.points_x_64,
             },
             .{
-                .path = "./src/shader.glsl",
-                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_REDUCE", "EYEFACE_REDUCE_MIN" },
+                .typ = .reduce_min,
                 .reduction_factor = 256,
                 .group_x = app_state.reduction_points_x_64,
             },
             .{
-                .path = "./src/shader.glsl",
-                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_REDUCE", "EYEFACE_REDUCE_MAX" },
+                .typ = .reduce_max,
                 .reduction_factor = 256,
                 .group_x = app_state.reduction_points_x_64,
             },
             .{
-                .path = "./src/shader.glsl",
-                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_PROJECT" },
+                .typ = .project,
                 .group_x = app_state.points_x_64,
             },
             .{
-                .path = "./src/shader.glsl",
-                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_OCCLUSION" },
+                .typ = .occlusion,
                 .group_x = voxel_grid_sze,
             },
             .{
-                .path = "./src/shader.glsl",
-                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_DRAW" },
+                .typ = .draw,
                 .group_x = screen_sze,
             },
         };
 
         for (pipelines, 0..) |p, i| {
-            const compute_spv = blk1: {
-                const frag: utils.Glslc.Compiler.Code = .{ .path = .{
-                    .main = p.path,
-                    .include = &[_][]const u8{},
-                    .definitions = p.define,
-                } };
-                // _ = compiler.dump_assembly(allocator, &frag);
-                const res = try compiler.compile(
-                    allocator,
-                    &frag,
-                    .spirv,
-                    .compute,
-                );
-                switch (res) {
-                    .Err => |msg| {
-                        std.debug.print("{s}\n", .{msg.msg});
-                        allocator.free(msg.msg);
-                        return msg.err;
-                    },
-                    .Ok => |ok| {
-                        errdefer allocator.free(ok);
-                        break :blk1 ok;
-                    },
-                }
-            };
-            defer allocator.free(compute_spv);
-
             pipelines[i].pipeline = try ComputePipeline.new(device, .{
-                .shader = compute_spv,
+                .shader = self.stages.shaders.get(p.typ),
                 .desc_set_layouts = &[_]vk.DescriptorSetLayout{self.compute_descriptor_set.layout},
             });
         }
@@ -399,5 +370,138 @@ pub const DynamicState = struct {
             }
             allocator.free(self.compute_pipelines);
         }
+    }
+};
+
+const ShaderStageManager = struct {
+    shaders: StageMap,
+    compiler: CompilerUtils.Compiler,
+
+    const ShaderStage = enum {
+        clear_bufs,
+        iterate,
+        reduce_min,
+        reduce_max,
+        project,
+        occlusion,
+        draw,
+    };
+    const StageMap = std.EnumArray(ShaderStage, []u32);
+    const StageSet = std.EnumSet(ShaderStage);
+    const CompilerUtils = render_utils.ShaderCompiler(struct {
+        pub fn get_metadata(_: CompilerUtils.ShaderInfo) !@This() {
+            return .{};
+        }
+    }, ShaderStage);
+
+    pub fn init() !@This() {
+        const comp = try CompilerUtils.Compiler.init(&[_]CompilerUtils.ShaderInfo{
+            .{
+                .typ = .clear_bufs,
+                .stage = .compute,
+                .path = "./src/shader.glsl",
+                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_CLEAR_BUFS" },
+            },
+            .{
+                .typ = .iterate,
+                .stage = .compute,
+                .path = "./src/shader.glsl",
+                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_ITERATE" },
+            },
+            .{
+                .typ = .reduce_min,
+                .stage = .compute,
+                .path = "./src/shader.glsl",
+                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_REDUCE", "EYEFACE_REDUCE_MIN" },
+            },
+            .{
+                .typ = .reduce_max,
+                .stage = .compute,
+                .path = "./src/shader.glsl",
+                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_REDUCE", "EYEFACE_REDUCE_MAX" },
+            },
+            .{
+                .typ = .project,
+                .stage = .compute,
+                .path = "./src/shader.glsl",
+                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_PROJECT" },
+            },
+            .{
+                .typ = .occlusion,
+                .stage = .compute,
+                .path = "./src/shader.glsl",
+                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_OCCLUSION" },
+            },
+            .{
+                .typ = .draw,
+                .stage = .compute,
+                .path = "./src/shader.glsl",
+                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_DRAW" },
+            },
+        });
+        errdefer comp.deinit();
+
+        var shaders = StageMap.initUndefined();
+        var set = StageSet.initEmpty();
+        errdefer {
+            var it = set.iterator();
+            while (it.next()) |key| {
+                const code = shaders.get(key);
+                allocator.free(code);
+            }
+        }
+
+        const set_full = StageSet.initFull();
+        while (!set.eql(set_full)) {
+            while (comp.ctx.compiled.try_recv()) |shader| {
+                if (set.contains(shader.typ)) {
+                    const old = shaders.get(shader.typ);
+                    allocator.free(old);
+                }
+                shaders.set(shader.typ, shader.code);
+                set.insert(shader.typ);
+            }
+
+            while (comp.ctx.err_chan.try_recv()) |msg_| {
+                if (msg_) |msg| {
+                    defer allocator.free(msg);
+                    std.debug.print("{s}\n", .{msg});
+                }
+            }
+        }
+
+        return .{
+            .shaders = shaders,
+            .compiler = comp,
+        };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        for (self.shaders.values) |spirv| {
+            allocator.free(spirv);
+        }
+        self.compiler.deinit();
+    }
+
+    pub fn update(self: *@This()) bool {
+        const can_recv = self.compiler.has_updates();
+
+        while (self.compiler.ctx.compiled.try_recv()) |shader| {
+            const old = self.shaders.get(shader.typ);
+            allocator.free(old);
+
+            self.shaders.set(shader.typ, shader.code);
+        }
+
+        while (self.compiler.ctx.err_chan.try_recv()) |msg_| {
+            if (msg_) |msg| {
+                defer allocator.free(msg);
+                std.debug.print("shader error: {s}\n", .{msg});
+            } else {
+                std.debug.print("no shader errors lesgo :)\n", .{});
+            }
+        }
+
+        return can_recv;
     }
 };

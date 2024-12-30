@@ -135,6 +135,8 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         },
     });
     errdefer screen.deinit(device);
+    try screen.transition(ctx, cmd_pool, .undefined, .general);
+
     var screen_depth = try Buffer.new(ctx, .{
         .size = @sizeOf(f32) * app_state.monitor_rez.width * app_state.monitor_rez.height,
     });
@@ -293,12 +295,6 @@ pub const RendererState = struct {
         errdefer cmdbuf.deinit(device);
 
         try cmdbuf.begin(device);
-        cmdbuf.transitionImg(device, .{
-            .image = app.screen_image.image,
-            .layout = .undefined,
-            .new_layout = .general,
-            .queue_family_index = ctx.graphics_queue.family,
-        });
         for (compute_pipelines) |p| {
             cmdbuf.bindCompute(device, .{ .pipeline = p.pipeline, .desc_set = app.compute_descriptor_set.set });
             var x = p.group_x;
@@ -317,28 +313,12 @@ pub const RendererState = struct {
                 }
             }
         }
-        cmdbuf.transitionImg(device, .{
+        cmdbuf.drawIntoSwapchain(device, .{
             .image = app.screen_image.image,
-            .layout = .undefined,
-            .new_layout = .transfer_src_optimal,
-            .queue_family_index = ctx.graphics_queue.family,
-        });
-        cmdbuf.transitionSwapchain(device, .{
-            .layout = .undefined,
-            .new_layout = .transfer_dst_optimal,
-            .queue_family_index = ctx.graphics_queue.family,
-            .swapchain = &swapchain,
-        });
-        cmdbuf.blitIntoSwapchain(device, .{
-            .image = app.screen_image.image,
+            .image_layout = .general,
             .size = swapchain.extent,
             .swapchain = &swapchain,
-        });
-        cmdbuf.transitionSwapchain(device, .{
-            .layout = .transfer_dst_optimal,
-            .new_layout = .color_attachment_optimal,
-            .queue_family_index = ctx.graphics_queue.family,
-            .swapchain = &swapchain,
+            .queue_family = ctx.graphics_queue.family,
         });
         try cmdbuf.end(device);
 

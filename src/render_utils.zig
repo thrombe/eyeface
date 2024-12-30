@@ -542,6 +542,39 @@ pub const Image = struct {
         };
     }
 
+    pub fn transition(self: *@This(), ctx: *Engine.VulkanContext, pool: vk.CommandPool, layout: vk.ImageLayout, new_layout: vk.ImageLayout) !void {
+        const device = &ctx.device;
+
+        var cmdbuf_handle: vk.CommandBuffer = undefined;
+        try device.allocateCommandBuffers(&.{
+            .command_pool = pool,
+            .level = .primary,
+            .command_buffer_count = 1,
+        }, @ptrCast(&cmdbuf_handle));
+        defer device.freeCommandBuffers(pool, 1, @ptrCast(&cmdbuf_handle));
+
+        // OOF: so you are saying i could have been using a nicer api all this time? :mous
+        const cmdbuf = Engine.VulkanContext.Api.CommandBuffer.init(cmdbuf_handle, device.wrapper);
+
+        try cmdbuf.beginCommandBuffer(&.{
+            .flags = .{ .one_time_submit_bit = true },
+        });
+
+        {
+            transitionImage(cmdbuf.handle, device, self.image, layout, new_layout, ctx.graphics_queue.family);
+        }
+
+        try cmdbuf.endCommandBuffer();
+
+        const si = vk.SubmitInfo{
+            .command_buffer_count = 1,
+            .p_command_buffers = (&cmdbuf.handle)[0..1],
+            .p_wait_dst_stage_mask = undefined,
+        };
+        try device.queueSubmit(ctx.graphics_queue.handle, 1, @ptrCast(&si), .null_handle);
+        try device.queueWaitIdle(ctx.graphics_queue.handle);
+    }
+
     pub fn deinit(self: *@This(), device: *Device) void {
         device.destroyImageView(self.view, null);
         device.freeMemory(self.memory, null);
@@ -1007,6 +1040,47 @@ pub const CmdBuffer = struct {
             };
             device.cmdBlitImage2(cmdbuf, &blitinfo);
         }
+    }
+
+    pub fn drawIntoSwapchain(self: *@This(), device: *Device, v: struct {
+        typ: vk.ImageAspectFlags = .{ .color_bit = true },
+        image: vk.Image,
+        image_layout: vk.ImageLayout,
+        size: vk.Extent2D,
+        swapchain: *const Swapchain,
+        queue_family: u32,
+    }) void {
+        self.transitionImg(device, .{
+            .image = v.image,
+            .layout = v.image_layout,
+            .new_layout = .transfer_src_optimal,
+            .queue_family_index = v.queue_family,
+        });
+
+        self.transitionSwapchain(device, .{
+            .layout = .undefined,
+            .new_layout = .transfer_dst_optimal,
+            .queue_family_index = v.queue_family,
+            .swapchain = v.swapchain,
+        });
+        self.blitIntoSwapchain(device, .{
+            .image = v.image,
+            .size = v.swapchain.extent,
+            .swapchain = v.swapchain,
+        });
+        self.transitionSwapchain(device, .{
+            .layout = .transfer_dst_optimal,
+            .new_layout = .color_attachment_optimal,
+            .queue_family_index = v.queue_family,
+            .swapchain = v.swapchain,
+        });
+
+        self.transitionImg(device, .{
+            .image = v.image,
+            .layout = .transfer_src_optimal,
+            .new_layout = v.image_layout,
+            .queue_family_index = v.queue_family,
+        });
     }
 
     pub fn dispatch(self: *@This(), device: *Device, v: struct { x: u32, y: u32 = 1, z: u32 = 1 }) void {

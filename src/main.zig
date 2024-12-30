@@ -18,9 +18,8 @@ const gui = @import("gui.zig");
 const GuiEngine = gui.GuiEngine;
 
 const Renderer = @import("renderer.zig");
-
-const state = @import("state.zig");
-const AppState = state.AppState;
+const AppState = Renderer.AppState;
+const GuiState = Renderer.GuiState;
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 pub const allocator = gpa.allocator();
@@ -36,7 +35,7 @@ pub fn main() !void {
         defer gui_engine.deinit();
 
         var app_state = try AppState.init(engine.window);
-        var gui_state = state.GuiState{};
+        var gui_state = GuiState{};
 
         var renderer = try Renderer.init(&engine, &app_state);
         defer renderer.deinit(&engine.graphics.device);

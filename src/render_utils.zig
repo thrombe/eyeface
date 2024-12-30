@@ -1501,10 +1501,16 @@ pub fn ShaderCompiler(meta: type, typ: type) type {
                 shader_fuse: utils.FsFuse,
                 shaders: []ShaderInfo,
                 dump_assembly: bool = false,
+                has_updates: Fuse = .{},
 
                 exit: Fuse = .{},
 
                 fn update(self: *@This()) !void {
+                    var has_updates_ = false;
+                    defer if (has_updates_) {
+                        _ = self.has_updates.fuse();
+                    };
+
                     while (self.shader_fuse.try_recv()) |ev| {
                         defer ev.deinit();
 
@@ -1520,6 +1526,7 @@ pub fn ShaderCompiler(meta: type, typ: type) type {
                                 });
                             }
                         }
+                        has_updates_ = has_updates_ or found_any;
 
                         if (!found_any) {
                             std.debug.print("Unknown file update: {s}\n", .{ev.file});
@@ -1535,11 +1542,18 @@ pub fn ShaderCompiler(meta: type, typ: type) type {
                     }
                     self.err_chan.deinit();
 
+                    while (self.compiled.try_recv()) |shader| {
+                        shader.deinit();
+                    }
                     self.compiled.deinit();
                     self.shader_fuse.deinit();
 
                     for (self.shaders) |s| {
                         allocator.free(s.path);
+                        for (s.define) |def| {
+                            allocator.free(def);
+                        }
+                        allocator.free(s.define);
                     }
                     allocator.free(self.shaders);
                 }
@@ -1552,10 +1566,16 @@ pub fn ShaderCompiler(meta: type, typ: type) type {
                 errdefer shader_fuse.deinit();
 
                 const shaders = try allocator.dupe(ShaderInfo, shader_info);
+                // OOF: not getting free-d if anything errors but meh
                 for (shaders) |*s| {
                     var buf: [std.fs.MAX_PATH_BYTES:0]u8 = undefined;
                     const real = try std.fs.cwd().realpath(s.path, &buf);
                     s.path = try allocator.dupeZ(u8, real);
+                    const define = try allocator.alloc([]const u8, s.define.len);
+                    for (s.define, 0..) |def, i| {
+                        define[i] = try allocator.dupe(u8, def);
+                    }
+                    s.define = define;
                 }
 
                 const ctxt = try allocator.create(Ctx);
@@ -1567,6 +1587,24 @@ pub fn ShaderCompiler(meta: type, typ: type) type {
                     .compiled = try utils.Channel(Compiled).init(allocator),
                 };
                 errdefer ctxt.deinit();
+
+                var set = std.StringHashMap(void).init(allocator);
+                defer set.deinit();
+                for (shaders) |s| {
+                    if (!set.contains(s.path)) {
+                        try set.put(s.path, {});
+                    }
+                }
+
+                var it = set.iterator();
+                while (it.next()) |s| {
+                    const real = try allocator.dupe(u8, s.key_ptr.*);
+                    const stripped = try std.fs.path.relative(allocator, ctxt.shader_fuse.ctx.path, real);
+                    try ctxt.shader_fuse.ctx.channel.send(.{
+                        .file = stripped,
+                        .real = real,
+                    });
+                }
 
                 const Callbacks = struct {
                     fn spawn(ctx: *Ctx) void {
@@ -1596,6 +1634,10 @@ pub fn ShaderCompiler(meta: type, typ: type) type {
                 self.thread.join();
                 self.ctx.deinit();
                 allocator.destroy(self.ctx);
+            }
+
+            pub fn has_updates(self: *@This()) bool {
+                return self.ctx.has_updates.unfuse();
             }
         };
     };

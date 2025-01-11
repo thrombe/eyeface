@@ -18,6 +18,7 @@ const gui = @import("gui.zig");
 const GuiEngine = gui.GuiEngine;
 
 const application = @import("eyeface.zig");
+// const application = @import("mandlebulb.zig");
 const App = application.App;
 const AppState = application.AppState;
 const GuiState = application.GuiState;

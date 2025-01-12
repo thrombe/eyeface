@@ -1,11 +1,6 @@
 #version 460
 
-struct Mouse {
-    int x;
-    int y;
-    uint left;
-    uint right;
-};
+#include <common.glsl>
 
 struct Uniforms {
     mat4 world_to_screen;
@@ -31,29 +26,21 @@ layout(set = 0, binding = 0) uniform Ubo {
     Uniforms ubo;
 };
 
-uint rand_xorshift(uint state) {
-    state ^= (state << 13);
-    state ^= (state >> 17);
-    state ^= (state << 5);
-    return state;
+float map(vec3 pos) {
+    return length(pos - 0.0) - 2.0;
 }
 
-int to1D(ivec3 pos, int size) {
-    return pos.x + pos.y * size + pos.z * size * size;
-}
-
-int to1D(ivec2 pos, int size) {
-    return pos.x + pos.y * size;
-}
-
-ivec2 to2D(int id, int side) {
-    ivec2 pos = ivec2(id % side, (id / side)%side);
-    return pos;
-}
-
-ivec3 to3D(int id, int side) {
-    ivec3 pos = ivec3(id % side, (id / side)%side, (id / (side * side))%side);
-    return pos;
+vec4 march(vec3 ro, vec3 rd) {
+    float t = 0.0;
+    for (int i = 0; i<ubo.march_iterations && t<ubo.t_max; i++) {
+        vec3 pos = ro + t*rd;
+        float dt = map(pos);
+        if (dt < ubo.dt_min) {
+            break;
+        }
+        t += dt;
+    }
+    return vec4(1.0/t, 0.0, 0.0, 1.0);
 }
 
 #ifdef EYEFACE_COMPUTE
@@ -69,12 +56,17 @@ ivec3 to3D(int id, int side) {
             return;
         }
         ivec2 ipos = to2D(id, int(ubo.width));
+        ivec2 ires = ivec2(ubo.width, ubo.height);
         vec2 pos = vec2(ipos);
-        vec4 f_color = vec4(0.0);
+        vec2 res = vec2(ires);
 
-        pos /= vec2(float(ubo.width), float(ubo.height));
-        f_color = vec4(pos.x * pos.x, pos.y, 0.0, 1.0);
+        vec3 ro = ubo.eye.xyz;
+        vec3 rd = ubo.fwd.xyz;
+        rd += ubo.right.xyz * (pos.x - res.x/2.0)/res.y;
+        rd += ubo.up.xyz * (pos.y - res.y/2.0)/res.y;
+        rd = normalize(rd);
 
+        vec4 f_color = march(ro, rd);
         imageStore(screen, ipos, f_color);
     }
 #endif // EYEFACE_DRAW

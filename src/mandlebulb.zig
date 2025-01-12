@@ -42,6 +42,9 @@ const Device = Engine.VulkanContext.Api.Device;
 pub const Uniforms = extern struct {
     world_to_screen: Mat4x4,
     eye: Vec4,
+    fwd: Vec4,
+    right: Vec4,
+    up: Vec4,
     mouse: extern struct { x: i32, y: i32, left: u32, right: u32 },
     background_color: Vec4,
     frame: u32,
@@ -294,7 +297,7 @@ pub const AppState = struct {
 
         return .{
             .monitor_rez = .{ .width = sze.width, .height = sze.height },
-            .camera = math.Camera.init(Vec4{ .z = -5 }),
+            .camera = math.Camera.init(Vec4{ .z = 5 }, math.Camera.constants.basis.opengl),
             .mouse = .{ .x = mouse.x, .y = mouse.y, .left = mouse.left },
             .rng = rng,
         };
@@ -329,9 +332,19 @@ pub const AppState = struct {
     }
 
     pub fn uniforms(self: *const @This(), window: *Engine.Window) Uniforms {
+        const rot = self.camera.rot_quat();
+
+        const fwd = rot.rotate_vector(self.camera.basis.fwd);
+        const right = rot.rotate_vector(self.camera.basis.right);
+        const up = rot.rotate_vector(self.camera.basis.up);
+        const eye = self.camera.pos;
+
         return .{
             .world_to_screen = self.camera.world_to_screen_mat(window.extent.width, window.extent.height),
-            .eye = self.camera.pos,
+            .eye = eye,
+            .fwd = fwd,
+            .right = right,
+            .up = up,
             .mouse = .{
                 .x = self.mouse.x,
                 .y = self.mouse.y,

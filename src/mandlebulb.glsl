@@ -10,6 +10,9 @@ struct Mouse {
 struct Uniforms {
     mat4 world_to_screen;
     vec4 eye;
+    vec4 fwd;
+    vec4 right;
+    vec4 up;
     Mouse mouse;
     vec4 background_color;
     uint frame;

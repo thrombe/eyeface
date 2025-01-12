@@ -522,18 +522,37 @@ pub const Camera = struct {
     yaw: f32 = 0,
     speed: f32 = 1.0,
     sensitivity: f32 = 0.2,
+    basis: struct {
+        fwd: Vec4,
+        right: Vec4,
+        up: Vec4,
+    },
 
     pub const constants = struct {
-        const pitch_min = -std.math.pi / 2.0 + 0.1;
-        const pitch_max = std.math.pi / 2.0 - 0.1;
-        const up = Vec4{ .y = -1 };
-        const fwd = Vec4{ .z = 1 };
-        const right = Vec4{ .x = 1 };
+        pub const pitch_min = -std.math.pi / 2.0 + 0.1;
+        pub const pitch_max = std.math.pi / 2.0 - 0.1;
+        pub const basis = struct {
+            pub const vulkan = struct {
+                pub const up = Vec4{ .y = -1 };
+                pub const fwd = Vec4{ .z = 1 };
+                pub const right = Vec4{ .x = 1 };
+            };
+            pub const opengl = struct {
+                pub const up = Vec4{ .y = 1 };
+                pub const fwd = Vec4{ .z = -1 };
+                pub const right = Vec4{ .x = 1 };
+            };
+        };
     };
 
-    pub fn init(pos: Vec4) @This() {
+    pub fn init(pos: Vec4, basis: anytype) @This() {
         return .{
             .pos = pos,
+            .basis = .{
+                .fwd = basis.fwd,
+                .right = basis.right,
+                .up = basis.up,
+            },
         };
     }
 
@@ -548,8 +567,8 @@ pub const Camera = struct {
         self.pitch = std.math.clamp(self.pitch, constants.pitch_min, constants.pitch_max);
 
         const rot = self.rot_quat();
-        const fwd = rot.rotate_vector(constants.fwd);
-        const right = rot.rotate_vector(constants.right);
+        const fwd = rot.rotate_vector(self.basis.fwd);
+        const right = rot.rotate_vector(self.basis.right);
 
         var speed = self.speed;
         if (pressed.shift) {
@@ -572,8 +591,8 @@ pub const Camera = struct {
 
     pub fn world_to_screen_mat(self: *const @This(), width: u32, height: u32) Mat4x4 {
         const rot = self.rot_quat();
-        const up = rot.rotate_vector(constants.up);
-        const fwd = rot.rotate_vector(constants.fwd);
+        const up = rot.rotate_vector(self.basis.up);
+        const fwd = rot.rotate_vector(self.basis.fwd);
 
         const projection_matrix = Mat4x4.perspective_projection(height, width, 0.01, 100.0, std.math.pi / 3.0);
         const view_matrix = Mat4x4.view(self.pos, fwd, up);
@@ -582,10 +601,10 @@ pub const Camera = struct {
         return world_to_screen;
     }
 
-    fn rot_quat(self: *const @This()) Vec4 {
+    pub fn rot_quat(self: *const @This()) Vec4 {
         var rot = Vec4.quat_identity_rot();
-        rot = rot.quat_mul(Vec4.quat_angle_axis(self.pitch, constants.right));
-        rot = rot.quat_mul(Vec4.quat_angle_axis(self.yaw, constants.up));
+        rot = rot.quat_mul(Vec4.quat_angle_axis(self.pitch, self.basis.right));
+        rot = rot.quat_mul(Vec4.quat_angle_axis(self.yaw, self.basis.up));
         rot = rot.quat_conjugate();
         return rot;
     }

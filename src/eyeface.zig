@@ -489,7 +489,7 @@ pub const AppState = struct {
 
         return .{
             .monitor_rez = .{ .width = sze.width, .height = sze.height },
-            .camera = math.Camera.init(Vec4{ .z = -5 }),
+            .camera = math.Camera.init(Vec4{ .z = -5 }, math.Camera.constants.basis.vulkan),
             .mouse = .{ .x = mouse.x, .y = mouse.y, .left = mouse.left },
             .transforms = transform.sirpinski_pyramid(),
             .target_transforms = generator.generate(rng.random()),

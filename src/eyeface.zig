@@ -584,14 +584,22 @@ pub const GuiState = struct {
     const ShearConstraints = TransformSet.Builder.Generator.ShearConstraints;
     const Vec3Constraints = TransformSet.Builder.Generator.Vec3Constraints;
 
+    frame_times: [10]f32 = std.mem.zeroes([10]f32),
+    frame_times_i: usize = 10,
+
     pub fn tick(self: *@This(), state: *AppState, lap: u64) void {
         const delta = @as(f32, @floatFromInt(lap)) / @as(f32, @floatFromInt(std.time.ns_per_s));
         const generator = &state.transform_generator;
 
+        self.frame_times_i += 1;
+        self.frame_times_i = @rem(self.frame_times_i, self.frame_times.len);
+        self.frame_times[self.frame_times_i] = delta * std.time.ms_per_s;
+        const frametime = std.mem.max(f32, &self.frame_times);
+
         c.ImGui_SetNextWindowPos(.{ .x = 5, .y = 5 }, c.ImGuiCond_Once);
         defer c.ImGui_End();
         if (c.ImGui_Begin("SIKE", null, c.ImGuiWindowFlags_None)) {
-            c.ImGui_Text("Application average %.3f ms/frame (%.1f FPS)", delta, 1.0 / delta);
+            c.ImGui_Text("Application average %.3f ms/frame (%.1f FPS)", frametime, std.time.ms_per_s / frametime);
 
             c.ImGui_Text("State");
             self.editState(state);

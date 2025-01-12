@@ -1575,19 +1575,20 @@ pub fn ShaderCompiler(meta: type, stages: type) type {
         pub const ShaderInfo = struct {
             typ: stages,
             stage: utils.Glslc.Compiler.Stage,
-            path: [:0]const u8,
+            path: []const u8,
+            include: []const []const u8,
             define: []const []const u8,
 
             fn compile(self: *const @This(), ctx: *Compiler.Ctx) ![]u32 {
                 const comp = utils.Glslc.Compiler{ .opt = .fast, .env = .vulkan1_3 };
-                const frag: utils.Glslc.Compiler.Code = .{ .path = .{
+                const shader: utils.Glslc.Compiler.Code = .{ .path = .{
                     .main = self.path,
-                    .include = &[_][]const u8{},
+                    .include = self.include,
                     .definitions = self.define,
                 } };
                 if (ctx.dump_assembly) blk: {
                     // TODO: print this on screen instead of console
-                    const res = comp.dump_assembly(allocator, &frag, self.stage) catch {
+                    const res = comp.dump_assembly(allocator, &shader, self.stage) catch {
                         break :blk;
                     };
                     switch (res) {
@@ -1603,7 +1604,7 @@ pub fn ShaderCompiler(meta: type, stages: type) type {
                 const frag_bytes = blk: {
                     const res = try comp.compile(
                         allocator,
-                        &frag,
+                        &shader,
                         .spirv,
                         self.stage,
                     );
@@ -1692,6 +1693,10 @@ pub fn ShaderCompiler(meta: type, stages: type) type {
                             allocator.free(def);
                         }
                         allocator.free(s.define);
+                        for (s.include) |inc| {
+                            allocator.free(inc);
+                        }
+                        allocator.free(s.include);
                     }
                     allocator.free(self.shaders);
                 }
@@ -1708,12 +1713,20 @@ pub fn ShaderCompiler(meta: type, stages: type) type {
                 for (shaders) |*s| {
                     var buf: [std.fs.MAX_PATH_BYTES:0]u8 = undefined;
                     const real = try std.fs.cwd().realpath(s.path, &buf);
-                    s.path = try allocator.dupeZ(u8, real);
+                    s.path = try allocator.dupe(u8, real);
+
                     const define = try allocator.alloc([]const u8, s.define.len);
                     for (s.define, 0..) |def, i| {
                         define[i] = try allocator.dupe(u8, def);
                     }
                     s.define = define;
+
+                    const include = try allocator.alloc([]const u8, s.include.len);
+                    for (s.include, 0..) |inc, i| {
+                        const real_inc = try std.fs.cwd().realpath(inc, &buf);
+                        include[i] = try allocator.dupe(u8, real_inc);
+                    }
+                    s.include = include;
                 }
 
                 const ctxt = try allocator.create(Ctx);

@@ -257,6 +257,7 @@ const ShaderStageManager = struct {
                 .stage = .compute,
                 .path = "./src/mandlebulb.glsl",
                 .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_DRAW" },
+                .include = &[_][]const u8{"./src"},
             },
         });
         errdefer comp.deinit();

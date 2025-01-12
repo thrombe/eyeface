@@ -508,12 +508,13 @@ pub const AppState = struct {
         const shift = window.is_pressed(c.GLFW_KEY_LEFT_SHIFT);
         const mouse = window.poll_mouse();
 
+        var dx: i32 = 0;
+        var dy: i32 = 0;
         if (mouse.left) {
-            self.camera.tick(delta, .{
-                .dx = mouse.x - self.mouse.x,
-                .dy = mouse.y - self.mouse.y,
-            }, .{ .w = w, .a = a, .s = s, .d = d, .shift = shift });
+            dx = mouse.x - self.mouse.x;
+            dy = mouse.y - self.mouse.y;
         }
+        self.camera.tick(delta, .{ .dx = dx, .dy = dy }, .{ .w = w, .a = a, .s = s, .d = d, .shift = shift });
 
         self.mouse.left = mouse.left;
         self.mouse.x = mouse.x;

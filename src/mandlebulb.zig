@@ -54,6 +54,9 @@ pub const Uniforms = extern struct {
     height: u32,
     monitor_width: u32,
     monitor_height: u32,
+    march_iterations: u32,
+    t_max: f32,
+    dt_min: f32,
 };
 
 pub fn init(engine: *Engine, app_state: *AppState) !@This() {
@@ -279,6 +282,10 @@ pub const AppState = struct {
     mouse: extern struct { x: i32 = 0, y: i32 = 0, left: bool = false, right: bool = false } = .{},
     camera: math.Camera,
 
+    march_iterations: u32 = 512,
+    t_max: f32 = 50.0,
+    dt_min: f32 = 0.0001,
+
     frame: u32 = 0,
     time: f32 = 0,
     deltatime: f32 = 0,
@@ -359,6 +366,9 @@ pub const AppState = struct {
             .height = window.extent.height,
             .monitor_width = self.monitor_rez.width,
             .monitor_height = self.monitor_rez.height,
+            .march_iterations = self.march_iterations,
+            .t_max = self.t_max,
+            .dt_min = self.dt_min,
         };
     }
 };
@@ -386,5 +396,11 @@ pub const GuiState = struct {
         _ = c.ImGui_ColorEdit3("Background Color", @ptrCast(&state.background_color), c.ImGuiColorEditFlags_Float);
 
         _ = c.ImGui_Checkbox("Pause t (pause_t)", &state.pause_t);
+
+        _ = c.ImGui_SliderInt("March iterations", @ptrCast(&state.march_iterations), 0, 1024);
+        _ = c.ImGui_SliderFloat("t max", &state.t_max, 0.1, 1000.0);
+        var pow = @log10(state.dt_min);
+        _ = c.ImGui_SliderFloat("dt min (10^this)", &pow, -10.0, 0.0);
+        state.dt_min = std.math.pow(f32, 10.0, pow);
     }
 };

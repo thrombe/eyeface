@@ -22,6 +22,9 @@ struct Uniforms {
     uint height;
     uint monitor_width;
     uint monitor_height;
+    uint march_iterations;
+    float t_max;
+    float dt_min;
 };
 
 layout(set = 0, binding = 0) uniform Ubo {

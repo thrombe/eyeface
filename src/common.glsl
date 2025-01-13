@@ -64,3 +64,23 @@ ivec3 to3D(int id, int side) {
     return pos;
 }
 
+vec3 reinhard_tonemap(vec3 x) {
+    return x / (x + vec3(1.0));
+}
+
+vec3 tanh_tonemap(vec3 x) {
+    x = clamp(x, -40.0, 40.0);
+    return (exp(x) - exp(-x)) / (exp(x) + exp(-x));
+}
+
+vec3 aces_tonemap(vec3 x) {
+    return (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14);
+}
+
+vec3 gamma_correction(vec3 x, float gamma) {
+    return vec3(
+        pow(x.x, gamma),
+        pow(x.y, gamma),
+        pow(x.z, gamma)
+    );
+}

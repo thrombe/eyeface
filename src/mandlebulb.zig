@@ -61,6 +61,10 @@ pub const Uniforms = extern struct {
 
     background_color1: Vec4,
     background_color2: Vec4,
+    trap_color1: Vec4,
+    trap_color2: Vec4,
+    emission_color1: Vec4,
+    emission_color2: Vec4,
 
     light_dir: Vec4,
     fractal_iterations: u32,
@@ -73,6 +77,7 @@ pub const Uniforms = extern struct {
     fractal_density: f32,
     gi_samples: u32,
     temporal_blend_factor: f32,
+    min_background_attenuation: f32,
     t_max: f32,
     dt_min: f32,
 
@@ -348,6 +353,10 @@ pub const AppState = struct {
 
     background_color1: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#ff9999ff"),
     background_color2: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#33334cff"),
+    trap_color1: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#ffffffff"),
+    trap_color2: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#000000ff"),
+    emission_color1: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#669900ff"),
+    emission_color2: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#0033ffff"),
 
     light_dir: Vec4 = .{ .x = 1.0, .y = 1.0, .z = 1.0 },
     fractal_iterations: u32 = 10,
@@ -360,6 +369,7 @@ pub const AppState = struct {
     fractal_density: f32 = 128.0,
     gi_samples: u32 = 64,
     temporal_blend_factor: f32 = 0.9,
+    min_background_attenuation: f32 = 0.04,
     t_max: f32 = 50.0,
     dt_min: f32 = 0.0001,
     voxel_debug_view: bool = false,
@@ -441,6 +451,10 @@ pub const AppState = struct {
             },
             .background_color1 = self.background_color1,
             .background_color2 = self.background_color2,
+            .trap_color1 = self.trap_color1,
+            .trap_color2 = self.trap_color2,
+            .emission_color1 = self.emission_color1,
+            .emission_color2 = self.emission_color2,
             .frame = self.frame,
             .time = self.time,
             .deltatime = self.deltatime,
@@ -460,6 +474,7 @@ pub const AppState = struct {
             .fractal_density = self.fractal_density,
             .gi_samples = self.gi_samples,
             .temporal_blend_factor = self.temporal_blend_factor,
+            .min_background_attenuation = self.min_background_attenuation,
             .voxel_debug_view = @intCast(@intFromBool(self.voxel_debug_view)),
             .t_max = self.t_max,
             .dt_min = self.dt_min,
@@ -503,6 +518,10 @@ pub const GuiState = struct {
 
         _ = c.ImGui_ColorEdit3("Background Color 1", @ptrCast(&state.background_color1), c.ImGuiColorEditFlags_Float);
         _ = c.ImGui_ColorEdit3("Background Color 2", @ptrCast(&state.background_color2), c.ImGuiColorEditFlags_Float);
+        _ = c.ImGui_ColorEdit3("trap color 1", @ptrCast(&state.trap_color1), c.ImGuiColorEditFlags_Float);
+        _ = c.ImGui_ColorEdit3("trap color 2", @ptrCast(&state.trap_color2), c.ImGuiColorEditFlags_Float);
+        _ = c.ImGui_ColorEdit3("emission color 1", @ptrCast(&state.emission_color1), c.ImGuiColorEditFlags_Float);
+        _ = c.ImGui_ColorEdit3("emission color 2", @ptrCast(&state.emission_color2), c.ImGuiColorEditFlags_Float);
 
         _ = c.ImGui_Checkbox("voxel debug view", @ptrCast(&state.voxel_debug_view));
 
@@ -518,6 +537,7 @@ pub const GuiState = struct {
         _ = c.ImGui_SliderFloat("fractal density", &state.fractal_density, 0.01, 512.0);
         _ = c.ImGui_SliderInt("GI samples", @ptrCast(&state.gi_samples), 0, 4096);
         _ = c.ImGui_SliderFloat("temporal blend factor", &state.temporal_blend_factor, 0.01, 1.0);
+        _ = c.ImGui_SliderFloat("min background attenuation", &state.min_background_attenuation, 0.0, 1.0);
         _ = c.ImGui_SliderFloat("t max", &state.t_max, 0.1, 1000.0);
         var pow = @log10(state.dt_min);
         _ = c.ImGui_SliderFloat("dt min (10^this)", &pow, -10.0, 0.0);

@@ -22,6 +22,10 @@ struct Uniforms {
 
     vec4 background_color1;
     vec4 background_color2;
+    vec4 trap_color1;
+    vec4 trap_color2;
+    vec4 emission_color1;
+    vec4 emission_color2;
 
     vec4 light_dir;
     int fractal_iterations;
@@ -34,6 +38,7 @@ struct Uniforms {
     float fractal_density;
     int gi_samples;
     float temporal_blend_factor;
+    float min_background_attenuation;
     float t_max;
     float dt_min;
 };

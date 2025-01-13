@@ -13,6 +13,31 @@ uint rand_xorshift(uint state) {
     return state;
 }
 
+uint hash(uint i) {
+    i *= 0xB5297A4Du;
+    i ^= i >> 8;
+    i += 0x68E31DA4u;
+    i ^= i << 8;
+    i *= 0x1B56C4E9u;
+    i ^= i >> 8;
+    return i;
+}
+
+float fhash(uint i) {
+    return float(hash(i))/4294967295.0;
+}
+
+uint seed = 0;
+float random() {
+    return fhash(seed++);
+}
+
+vec3 random_normal() {
+    vec2 r = vec2(6.28318530718 * random(), acos(2.0 * random() - 1.0));
+    vec2 c = cos(r), s = sin(r);
+    return vec3(s.y * s.x, s.y * c.x, c.y);
+}
+
 int to1D(ivec3 pos, int size) {
     return pos.x + pos.y * size + pos.z * size * size;
 }

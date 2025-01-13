@@ -20,6 +20,7 @@ struct Uniforms {
     uint march_iterations;
     float t_max;
     float dt_min;
+    uint voxel_grid_side;
 };
 
 layout(set = 0, binding = 0) uniform Ubo {

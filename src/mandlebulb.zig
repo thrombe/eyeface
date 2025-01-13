@@ -31,6 +31,8 @@ const allocator = main.allocator;
 pub const App = @This();
 
 uniforms: UniformBuffer(Uniforms),
+voxels: Buffer,
+g_buffer: Buffer,
 screen_image: Image,
 descriptor_pool: DescriptorPool,
 compute_descriptor_set: DescriptorSet,
@@ -57,6 +59,7 @@ pub const Uniforms = extern struct {
     march_iterations: u32,
     t_max: f32,
     dt_min: f32,
+    voxel_grid_side: u32,
 };
 
 pub fn init(engine: *Engine, app_state: *AppState) !@This() {
@@ -94,12 +97,24 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     errdefer screen.deinit(device);
     try screen.transition(ctx, cmd_pool, .undefined, .general);
 
+    var voxels = try Buffer.new(ctx, .{
+        .size = @sizeOf(f32) * 4 * try std.math.powi(u32, app_state.voxels.max_side, 3),
+    });
+    errdefer voxels.deinit(device);
+
+    var g_buffer = try Buffer.new(ctx, .{
+        .size = @sizeOf(f32) * 4 * app_state.monitor_rez.width * app_state.monitor_rez.height,
+    });
+    errdefer g_buffer.deinit(device);
+
     var desc_pool = try DescriptorPool.new(device);
     errdefer desc_pool.deinit(device);
 
     var compute_set_builder = desc_pool.set_builder();
     defer compute_set_builder.deinit();
     try compute_set_builder.add(&uniforms);
+    try compute_set_builder.add(&voxels);
+    try compute_set_builder.add(&g_buffer);
     try compute_set_builder.add(&screen);
     var compute_set = try compute_set_builder.build(device);
     errdefer compute_set.deinit(device);
@@ -109,6 +124,8 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
 
     return .{
         .uniforms = uniforms,
+        .voxels = voxels,
+        .g_buffer = g_buffer,
         .screen_image = screen,
         .descriptor_pool = desc_pool,
         .compute_descriptor_set = compute_set,
@@ -120,6 +137,8 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
 pub fn deinit(self: *@This(), device: *Device) void {
     defer device.destroyCommandPool(self.command_pool, null);
     defer self.uniforms.deinit(device);
+    defer self.voxels.deinit(device);
+    defer self.g_buffer.deinit(device);
     defer self.screen_image.deinit(device);
     defer self.compute_descriptor_set.deinit(device);
     defer self.descriptor_pool.deinit(device);
@@ -152,11 +171,14 @@ pub const RendererState = struct {
     pub fn init(app: *App, engine: *Engine, app_state: *AppState) !@This() {
         const ctx = &engine.graphics;
         const device = &ctx.device;
-        _ = app_state;
 
         const compute_pipelines = blk: {
             const screen_sze = blk1: {
                 const s = engine.window.extent.width * engine.window.extent.height;
+                break :blk1 s / 64 + @as(u32, @intCast(@intFromBool(s % 64 > 0)));
+            };
+            const voxel_grid_sze = blk1: {
+                const s = try std.math.powi(u32, app_state.voxels.side, 3);
                 break :blk1 s / 64 + @as(u32, @intCast(@intFromBool(s % 64 > 0)));
             };
             var pipelines = [_]struct {
@@ -286,6 +308,10 @@ pub const AppState = struct {
     march_iterations: u32 = 512,
     t_max: f32 = 50.0,
     dt_min: f32 = 0.0001,
+    voxels: struct {
+        side: u32 = 100,
+        max_side: u32 = 500,
+    } = .{},
 
     frame: u32 = 0,
     time: f32 = 0,
@@ -378,6 +404,7 @@ pub const AppState = struct {
             .march_iterations = self.march_iterations,
             .t_max = self.t_max,
             .dt_min = self.dt_min,
+            .voxel_grid_side = self.voxels.side,
         };
     }
 };

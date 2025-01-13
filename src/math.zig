@@ -560,7 +560,7 @@ pub const Camera = struct {
         self: *@This(),
         delta: f32,
         dp: struct { dx: i32, dy: i32 },
-        pressed: struct { w: bool, a: bool, s: bool, d: bool, shift: bool },
+        pressed: struct { w: bool, a: bool, s: bool, d: bool, shift: bool, ctrl: bool },
     ) void {
         self.yaw += @as(f32, @floatFromInt(dp.dx)) * self.sensitivity * delta;
         self.pitch -= @as(f32, @floatFromInt(dp.dy)) * self.sensitivity * delta;
@@ -573,6 +573,9 @@ pub const Camera = struct {
         var speed = self.speed;
         if (pressed.shift) {
             speed *= 2.0;
+        }
+        if (pressed.ctrl) {
+            speed *= 0.1;
         }
 
         if (pressed.w) {

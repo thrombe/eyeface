@@ -318,6 +318,7 @@ pub const AppState = struct {
         const s = window.is_pressed(c.GLFW_KEY_S);
         const d = window.is_pressed(c.GLFW_KEY_D);
         const shift = window.is_pressed(c.GLFW_KEY_LEFT_SHIFT);
+        const ctrl = window.is_pressed(c.GLFW_KEY_LEFT_CONTROL);
         const mouse = window.poll_mouse();
 
         var dx: i32 = 0;
@@ -326,7 +327,14 @@ pub const AppState = struct {
             dx = mouse.x - self.mouse.x;
             dy = mouse.y - self.mouse.y;
         }
-        self.camera.tick(delta, .{ .dx = dx, .dy = dy }, .{ .w = w, .a = a, .s = s, .d = d, .shift = shift });
+        self.camera.tick(delta, .{ .dx = dx, .dy = dy }, .{
+            .w = w,
+            .a = a,
+            .s = s,
+            .d = d,
+            .shift = shift,
+            .ctrl = ctrl,
+        });
 
         self.mouse.left = mouse.left;
         self.mouse.x = mouse.x;

@@ -59,11 +59,12 @@ pub fn main() !void {
 
             const lap = timer.lap();
             app_state.tick(lap, engine.window);
-            app.uniforms.uniforms = app_state.uniforms(engine.window);
 
             gui_renderer.render_start();
             gui_state.tick(&app_state, lap);
             try gui_renderer.render_end(&engine.graphics.device, &renderer_state.swapchain);
+
+            app.uniforms.uniforms = app_state.uniforms(engine.window);
 
             // multiple framebuffers => multiple descriptor sets => different buffers
             // big buffers that depends on the last frame's big buffer + multiple framebuffers => me sad

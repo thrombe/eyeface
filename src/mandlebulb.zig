@@ -54,6 +54,10 @@ pub const Uniforms = extern struct {
     monitor_height: u32,
 
     voxel_grid_side: u32,
+    voxel_debug_view: u32,
+    pad1: u32 = 0,
+    pad2: u32 = 0,
+    pad3: u32 = 0,
 
     background_color1: Vec4,
     background_color2: Vec4,
@@ -358,6 +362,7 @@ pub const AppState = struct {
     temporal_blend_factor: f32 = 0.9,
     t_max: f32 = 50.0,
     dt_min: f32 = 0.0001,
+    voxel_debug_view: bool = false,
 
     rng: std.Random.Xoshiro256,
 
@@ -444,7 +449,6 @@ pub const AppState = struct {
             .monitor_width = self.monitor_rez.width,
             .monitor_height = self.monitor_rez.height,
             .voxel_grid_side = self.voxels.side,
-            .voxel_grid_size = self.voxels.size,
             .light_dir = self.light_dir,
             .fractal_iterations = self.fractal_iterations,
             .march_iterations = self.march_iterations,
@@ -456,6 +460,7 @@ pub const AppState = struct {
             .fractal_density = self.fractal_density,
             .gi_samples = self.gi_samples,
             .temporal_blend_factor = self.temporal_blend_factor,
+            .voxel_debug_view = @intCast(@intFromBool(self.voxel_debug_view)),
             .t_max = self.t_max,
             .dt_min = self.dt_min,
         };
@@ -490,12 +495,29 @@ pub const GuiState = struct {
         _ = c.ImGui_SliderFloat("Speed", &state.camera.speed, 0.1, 10.0);
         _ = c.ImGui_SliderFloat("Sensitivity", &state.camera.sensitivity, 0.001, 2.0);
 
+        if (c.ImGui_Button("Reset time")) {
+            state.time = 0.0;
+            state.deltatime = 0.0;
+            state.frame = 0;
+        }
+
         _ = c.ImGui_ColorEdit3("Background Color 1", @ptrCast(&state.background_color1), c.ImGuiColorEditFlags_Float);
         _ = c.ImGui_ColorEdit3("Background Color 2", @ptrCast(&state.background_color2), c.ImGuiColorEditFlags_Float);
 
-        _ = c.ImGui_Checkbox("Pause t (pause_t)", &state.pause_t);
+        _ = c.ImGui_Checkbox("voxel debug view", @ptrCast(&state.voxel_debug_view));
 
+        _ = c.ImGui_SliderFloat3("light dir", @ptrCast(&state.light_dir), 0.0, 1.0);
+        state.light_dir = state.light_dir.normalize3D();
+        _ = c.ImGui_SliderInt("Fractal iterations", @ptrCast(&state.fractal_iterations), 0, 50);
         _ = c.ImGui_SliderInt("March iterations", @ptrCast(&state.march_iterations), 0, 1024);
+        _ = c.ImGui_SliderInt("Gather iterations", @ptrCast(&state.gather_iterations), 0, 4096);
+        _ = c.ImGui_SliderFloat("gather step factor", &state.gather_step_factor, 0.01, 2.0);
+        _ = c.ImGui_SliderFloat("march step factor", &state.march_step_factor, 0.01, 16.0);
+        _ = c.ImGui_SliderFloat("escape radius", &state.escape_r, 0.01, 16.0);
+        _ = c.ImGui_SliderFloat("fractal scale", &state.fractal_scale, 0.01, 2.0);
+        _ = c.ImGui_SliderFloat("fractal density", &state.fractal_density, 0.01, 512.0);
+        _ = c.ImGui_SliderInt("GI samples", @ptrCast(&state.gi_samples), 0, 4096);
+        _ = c.ImGui_SliderFloat("temporal blend factor", &state.temporal_blend_factor, 0.01, 1.0);
         _ = c.ImGui_SliderFloat("t max", &state.t_max, 0.1, 1000.0);
         var pow = @log10(state.dt_min);
         _ = c.ImGui_SliderFloat("dt min (10^this)", &pow, -10.0, 0.0);

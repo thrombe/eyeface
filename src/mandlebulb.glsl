@@ -15,6 +15,10 @@ struct Uniforms {
     uint monitor_height;
 
     uint voxel_grid_side;
+    uint voxel_debug_view;
+    uint pad1;
+    uint pad2;
+    uint pad3;
 
     vec4 background_color1;
     vec4 background_color2;

@@ -42,13 +42,12 @@ stages: ShaderStageManager,
 const Device = Engine.VulkanContext.Api.Device;
 
 pub const Uniforms = extern struct {
-    world_to_screen: Mat4x4,
-    eye: Vec4,
-    fwd: Vec4,
-    right: Vec4,
-    up: Vec4,
-    mouse: extern struct { x: i32, y: i32, left: u32, right: u32 },
-    background_color: Vec4,
+    camera: Camera,
+    mouse: Mouse,
+
+    background_color1: Vec4,
+    background_color2: Vec4,
+
     frame: u32,
     time: f32,
     deltatime: f32,
@@ -56,10 +55,27 @@ pub const Uniforms = extern struct {
     height: u32,
     monitor_width: u32,
     monitor_height: u32,
+
     march_iterations: u32,
     t_max: f32,
     dt_min: f32,
     voxel_grid_side: u32,
+
+    pub const Mouse = extern struct { x: i32, y: i32, left: u32, right: u32 };
+    pub const Camera = extern struct {
+        eye: Vec4,
+        fwd: Vec4,
+        right: Vec4,
+        up: Vec4,
+        meta: CameraMeta,
+
+        pub const CameraMeta = extern struct {
+            did_change: u32 = 0,
+            did_move: u32 = 0,
+            did_rotate: u32 = 0,
+            pad: u32 = 0,
+        };
+    };
 };
 
 pub fn init(engine: *Engine, app_state: *AppState) !@This() {
@@ -304,6 +320,7 @@ pub const AppState = struct {
     monitor_rez: struct { width: u32, height: u32 },
     mouse: extern struct { x: i32 = 0, y: i32 = 0, left: bool = false, right: bool = false } = .{},
     camera: math.Camera,
+    camera_meta: Uniforms.Camera.CameraMeta = .{},
 
     march_iterations: u32 = 512,
     t_max: f32 = 50.0,
@@ -319,7 +336,8 @@ pub const AppState = struct {
 
     pause_t: bool = false,
 
-    background_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#271212ff"),
+    background_color1: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#ff9999ff"),
+    background_color2: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#33334cff"),
 
     rng: std.Random.Xoshiro256,
 
@@ -353,6 +371,9 @@ pub const AppState = struct {
             dx = mouse.x - self.mouse.x;
             dy = mouse.y - self.mouse.y;
         }
+        self.camera_meta.did_move = @intCast(@intFromBool(w or a or s or d));
+        self.camera_meta.did_rotate = @intCast(@intFromBool((dx | dy) != 0));
+        self.camera_meta.did_change = @intCast(@intFromBool((self.camera_meta.did_move | self.camera_meta.did_rotate) > 0));
         self.camera.tick(delta, .{ .dx = dx, .dy = dy }, .{
             .w = w,
             .a = a,
@@ -382,18 +403,21 @@ pub const AppState = struct {
         const eye = self.camera.pos;
 
         return .{
-            .world_to_screen = self.camera.world_to_screen_mat(window.extent.width, window.extent.height),
-            .eye = eye,
-            .fwd = fwd,
-            .right = right,
-            .up = up,
+            .camera = .{
+                .eye = eye,
+                .fwd = fwd,
+                .right = right,
+                .up = up,
+                .meta = self.camera_meta,
+            },
             .mouse = .{
                 .x = self.mouse.x,
                 .y = self.mouse.y,
                 .left = @intCast(@intFromBool(self.mouse.left)),
                 .right = @intCast(@intFromBool(self.mouse.right)),
             },
-            .background_color = self.background_color,
+            .background_color1 = self.background_color1,
+            .background_color2 = self.background_color2,
             .frame = self.frame,
             .time = self.time,
             .deltatime = self.deltatime,
@@ -437,7 +461,8 @@ pub const GuiState = struct {
         _ = c.ImGui_SliderFloat("Speed", &state.camera.speed, 0.1, 10.0);
         _ = c.ImGui_SliderFloat("Sensitivity", &state.camera.sensitivity, 0.001, 2.0);
 
-        _ = c.ImGui_ColorEdit3("Background Color", @ptrCast(&state.background_color), c.ImGuiColorEditFlags_Float);
+        _ = c.ImGui_ColorEdit3("Background Color 1", @ptrCast(&state.background_color1), c.ImGuiColorEditFlags_Float);
+        _ = c.ImGui_ColorEdit3("Background Color 2", @ptrCast(&state.background_color2), c.ImGuiColorEditFlags_Float);
 
         _ = c.ImGui_Checkbox("Pause t (pause_t)", &state.pause_t);
 

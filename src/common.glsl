@@ -6,6 +6,21 @@ struct Mouse {
     uint right;
 };
 
+struct CameraMeta {
+    uint did_change;
+    uint did_move;
+    uint did_rotate;
+    uint pad;
+};
+
+struct Camera {
+    vec4 eye;
+    vec4 fwd;
+    vec4 right;
+    vec4 up;
+    CameraMeta meta;
+};
+
 // #define global_id int(gl_LocalInvocationID.x +\
 //         gl_LocalInvocationID.y * gl_WorkGroupSize.x +\
 //         gl_WorkGroupID.x * gl_WorkGroupSize.x * gl_WorkGroupSize.y)

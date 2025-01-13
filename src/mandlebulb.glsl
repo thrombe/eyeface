@@ -3,13 +3,12 @@
 #include <common.glsl>
 
 struct Uniforms {
-    mat4 world_to_screen;
-    vec4 eye;
-    vec4 fwd;
-    vec4 right;
-    vec4 up;
+    Camera camera;
     Mouse mouse;
-    vec4 background_color;
+
+    vec4 background_color1;
+    vec4 background_color2;
+
     uint frame;
     float time;
     float deltatime;
@@ -17,6 +16,7 @@ struct Uniforms {
     uint height;
     uint monitor_width;
     uint monitor_height;
+
     uint march_iterations;
     float t_max;
     float dt_min;

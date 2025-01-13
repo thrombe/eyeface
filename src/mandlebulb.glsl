@@ -6,9 +6,6 @@ struct Uniforms {
     Camera camera;
     Mouse mouse;
 
-    vec4 background_color1;
-    vec4 background_color2;
-
     uint frame;
     float time;
     float deltatime;
@@ -17,10 +14,24 @@ struct Uniforms {
     uint monitor_width;
     uint monitor_height;
 
-    uint march_iterations;
+    uint voxel_grid_side;
+
+    vec4 background_color1;
+    vec4 background_color2;
+
+    vec4 light_dir;
+    int fractal_iterations;
+    int march_iterations;
+    int gather_iterations;
+    float gather_step_factor;
+    float march_step_factor;
+    float escape_r;
+    float fractal_scale;
+    float fractal_density;
+    int gi_samples;
+    float temporal_blend_factor;
     float t_max;
     float dt_min;
-    uint voxel_grid_side;
 };
 
 layout(set = 0, binding = 0) uniform Ubo {

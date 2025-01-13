@@ -45,9 +45,6 @@ pub const Uniforms = extern struct {
     camera: Camera,
     mouse: Mouse,
 
-    background_color1: Vec4,
-    background_color2: Vec4,
-
     frame: u32,
     time: f32,
     deltatime: f32,
@@ -56,10 +53,24 @@ pub const Uniforms = extern struct {
     monitor_width: u32,
     monitor_height: u32,
 
+    voxel_grid_side: u32,
+
+    background_color1: Vec4,
+    background_color2: Vec4,
+
+    light_dir: Vec4,
+    fractal_iterations: u32,
     march_iterations: u32,
+    gather_iterations: u32,
+    gather_step_factor: f32,
+    march_step_factor: f32,
+    escape_r: f32,
+    fractal_scale: f32,
+    fractal_density: f32,
+    gi_samples: u32,
+    temporal_blend_factor: f32,
     t_max: f32,
     dt_min: f32,
-    voxel_grid_side: u32,
 
     pub const Mouse = extern struct { x: i32, y: i32, left: u32, right: u32 };
     pub const Camera = extern struct {
@@ -322,22 +333,31 @@ pub const AppState = struct {
     camera: math.Camera,
     camera_meta: Uniforms.Camera.CameraMeta = .{},
 
-    march_iterations: u32 = 512,
-    t_max: f32 = 50.0,
-    dt_min: f32 = 0.0001,
+    frame: u32 = 0,
+    time: f32 = 0,
+    deltatime: f32 = 0,
+
     voxels: struct {
         side: u32 = 100,
         max_side: u32 = 500,
     } = .{},
 
-    frame: u32 = 0,
-    time: f32 = 0,
-    deltatime: f32 = 0,
-
-    pause_t: bool = false,
-
     background_color1: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#ff9999ff"),
     background_color2: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#33334cff"),
+
+    light_dir: Vec4 = .{ .x = 1.0, .y = 1.0, .z = 1.0 },
+    fractal_iterations: u32 = 10,
+    march_iterations: u32 = 512,
+    gather_iterations: u32 = 1024,
+    gather_step_factor: f32 = 0.6,
+    march_step_factor: f32 = 2.0,
+    escape_r: f32 = 1.2,
+    fractal_scale: f32 = 0.45,
+    fractal_density: f32 = 128.0,
+    gi_samples: u32 = 64,
+    temporal_blend_factor: f32 = 0.9,
+    t_max: f32 = 50.0,
+    dt_min: f32 = 0.0001,
 
     rng: std.Random.Xoshiro256,
 
@@ -349,7 +369,7 @@ pub const AppState = struct {
 
         return .{
             .monitor_rez = .{ .width = sze.width, .height = sze.height },
-            .camera = math.Camera.init(Vec4{ .z = 5 }, math.Camera.constants.basis.opengl),
+            .camera = math.Camera.init(Vec4{ .z = 2 }, math.Camera.constants.basis.opengl),
             .mouse = .{ .x = mouse.x, .y = mouse.y, .left = mouse.left },
             .rng = rng,
         };
@@ -390,8 +410,6 @@ pub const AppState = struct {
         self.frame += 1;
         self.time += delta;
         self.deltatime = delta;
-
-        if (!self.pause_t) {}
     }
 
     pub fn uniforms(self: *const @This(), window: *Engine.Window) Uniforms {
@@ -425,10 +443,21 @@ pub const AppState = struct {
             .height = window.extent.height,
             .monitor_width = self.monitor_rez.width,
             .monitor_height = self.monitor_rez.height,
+            .voxel_grid_side = self.voxels.side,
+            .voxel_grid_size = self.voxels.size,
+            .light_dir = self.light_dir,
+            .fractal_iterations = self.fractal_iterations,
             .march_iterations = self.march_iterations,
+            .gather_iterations = self.gather_iterations,
+            .gather_step_factor = self.gather_step_factor,
+            .march_step_factor = self.march_step_factor,
+            .escape_r = self.escape_r,
+            .fractal_scale = self.fractal_scale,
+            .fractal_density = self.fractal_density,
+            .gi_samples = self.gi_samples,
+            .temporal_blend_factor = self.temporal_blend_factor,
             .t_max = self.t_max,
             .dt_min = self.dt_min,
-            .voxel_grid_side = self.voxels.side,
         };
     }
 };

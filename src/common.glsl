@@ -6,6 +6,14 @@ struct Mouse {
     uint right;
 };
 
+// #define global_id int(gl_LocalInvocationID.x +\
+//         gl_LocalInvocationID.y * gl_WorkGroupSize.x +\
+//         gl_WorkGroupID.x * gl_WorkGroupSize.x * gl_WorkGroupSize.y)
+
+#define global_id int(gl_GlobalInvocationID.x +\
+        gl_GlobalInvocationID.y * gl_NumWorkGroups.x * gl_WorkGroupSize.x +\
+        gl_GlobalInvocationID.z * gl_NumWorkGroups.x * gl_NumWorkGroups.y * gl_WorkGroupSize.x * gl_WorkGroupSize.y)
+
 uint rand_xorshift(uint state) {
     state ^= (state << 13);
     state ^= (state >> 17);

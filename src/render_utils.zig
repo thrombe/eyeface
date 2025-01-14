@@ -1143,11 +1143,15 @@ pub const Swapchain = struct {
         suboptimal,
     };
 
-    pub fn init(ctx: *Engine.VulkanContext, extent: vk.Extent2D) !Swapchain {
-        return try initRecycle(ctx, extent, .null_handle);
+    pub const Args = struct {
+        prefer_present_mode: ?vk.PresentModeKHR = null,
+    };
+
+    pub fn init(ctx: *Engine.VulkanContext, extent: vk.Extent2D, args: Args) !Swapchain {
+        return try initRecycle(ctx, .null_handle, extent, args);
     }
 
-    pub fn initRecycle(ctx: *Engine.VulkanContext, extent: vk.Extent2D, old_handle: vk.SwapchainKHR) !Swapchain {
+    pub fn initRecycle(ctx: *Engine.VulkanContext, old_handle: vk.SwapchainKHR, extent: vk.Extent2D, args: Args) !Swapchain {
         const caps = try ctx.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(ctx.pdev, ctx.surface);
         const actual_extent = blk: {
             if (caps.current_extent.width != 0xFFFF_FFFF) {
@@ -1191,6 +1195,12 @@ pub const Swapchain = struct {
         const present_mode = blk: {
             const present_modes = try ctx.instance.getPhysicalDeviceSurfacePresentModesAllocKHR(ctx.pdev, ctx.surface, allocator);
             defer allocator.free(present_modes);
+
+            if (args.prefer_present_mode) |mode| {
+                if (std.mem.indexOfScalar(vk.PresentModeKHR, present_modes, mode) != null) {
+                    break :blk mode;
+                }
+            }
 
             const preferred = [_]vk.PresentModeKHR{
                 .mailbox_khr,
@@ -1297,10 +1307,12 @@ pub const Swapchain = struct {
         device.destroySwapchainKHR(self.handle, null);
     }
 
-    pub fn recreate(self: *Swapchain, new_extent: vk.Extent2D, ctx: *Engine.VulkanContext) !void {
+    pub fn recreate(self: *Swapchain, ctx: *Engine.VulkanContext, new_extent: vk.Extent2D, args: Args) !void {
         const old_handle = self.handle;
         self.deinitExceptSwapchain();
-        self.* = try initRecycle(ctx, new_extent, old_handle);
+        self.* = try initRecycle(ctx, old_handle, new_extent, .{
+            .prefer_present_mode = args.prefer_present_mode orelse self.present_mode,
+        });
     }
 
     pub fn currentImage(self: Swapchain) vk.Image {

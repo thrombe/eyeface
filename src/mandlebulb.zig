@@ -75,11 +75,11 @@ pub const Uniforms = extern struct {
     escape_r: f32,
     fractal_scale: f32,
     fractal_density: f32,
+    ray_penetration_factor: f32,
     gi_samples: u32,
     temporal_blend_factor: f32,
-    min_background_attenuation: f32,
+    min_background_color_contribution: f32,
     t_max: f32,
-    dt_min: f32,
 
     pub const Mouse = extern struct { x: i32, y: i32, left: u32, right: u32 };
     pub const Camera = extern struct {
@@ -225,6 +225,14 @@ pub const RendererState = struct {
                 pipeline: ComputePipeline = undefined,
             }{
                 .{
+                    .typ = .volume,
+                    .group_x = voxel_grid_sze,
+                },
+                .{
+                    .typ = .render,
+                    .group_x = screen_sze,
+                },
+                .{
                     .typ = .draw,
                     .group_x = screen_sze,
                 },
@@ -300,6 +308,8 @@ const ShaderStageManager = struct {
     compiler: CompilerUtils.Compiler,
 
     const ShaderStage = enum {
+        volume,
+        render,
         draw,
     };
     const CompilerUtils = render_utils.ShaderCompiler(struct {
@@ -311,10 +321,24 @@ const ShaderStageManager = struct {
     pub fn init() !@This() {
         var comp = try CompilerUtils.Compiler.init(&[_]CompilerUtils.ShaderInfo{
             .{
+                .typ = .volume,
+                .stage = .compute,
+                .path = "./src/mandlebulb.glsl",
+                .define = &[_][]const u8{"EYEFACE_VOLUME"},
+                .include = &[_][]const u8{"./src"},
+            },
+            .{
+                .typ = .render,
+                .stage = .compute,
+                .path = "./src/mandlebulb.glsl",
+                .define = &[_][]const u8{"EYEFACE_RENDER"},
+                .include = &[_][]const u8{"./src"},
+            },
+            .{
                 .typ = .draw,
                 .stage = .compute,
                 .path = "./src/mandlebulb.glsl",
-                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_DRAW" },
+                .define = &[_][]const u8{"EYEFACE_DRAW"},
                 .include = &[_][]const u8{"./src"},
             },
         });
@@ -367,11 +391,11 @@ pub const AppState = struct {
     escape_r: f32 = 1.2,
     fractal_scale: f32 = 0.45,
     fractal_density: f32 = 128.0,
+    ray_penetration_factor: f32 = 1.0,
     gi_samples: u32 = 64,
     temporal_blend_factor: f32 = 0.9,
-    min_background_attenuation: f32 = 0.04,
+    min_background_color_contribution: f32 = 0.04,
     t_max: f32 = 50.0,
-    dt_min: f32 = 0.0001,
     voxel_debug_view: bool = false,
 
     rng: std.Random.Xoshiro256,
@@ -472,19 +496,26 @@ pub const AppState = struct {
             .escape_r = self.escape_r,
             .fractal_scale = self.fractal_scale,
             .fractal_density = self.fractal_density,
+            .ray_penetration_factor = self.ray_penetration_factor,
             .gi_samples = self.gi_samples,
             .temporal_blend_factor = self.temporal_blend_factor,
-            .min_background_attenuation = self.min_background_attenuation,
+            .min_background_color_contribution = self.min_background_color_contribution,
             .voxel_debug_view = @intCast(@intFromBool(self.voxel_debug_view)),
             .t_max = self.t_max,
-            .dt_min = self.dt_min,
         };
+    }
+
+    pub fn reset_time(self: *@This()) void {
+        self.time = 0;
+        self.deltatime = 0;
+        self.frame = 0;
     }
 };
 
 pub const GuiState = struct {
     frame_times: [10]f32 = std.mem.zeroes([10]f32),
     frame_times_i: usize = 10,
+    fps_cap: u32 = 15,
 
     pub fn tick(self: *@This(), state: *AppState, lap: u64) void {
         const delta = @as(f32, @floatFromInt(lap)) / @as(f32, @floatFromInt(std.time.ns_per_s));
@@ -523,6 +554,7 @@ pub const GuiState = struct {
         _ = c.ImGui_ColorEdit3("emission color 1", @ptrCast(&state.emission_color1), c.ImGuiColorEditFlags_Float);
         _ = c.ImGui_ColorEdit3("emission color 2", @ptrCast(&state.emission_color2), c.ImGuiColorEditFlags_Float);
 
+        _ = c.ImGui_SliderInt("voxel grid side", @ptrCast(&state.voxels.side), 0, @intCast(state.voxels.max_side));
         _ = c.ImGui_Checkbox("voxel debug view", @ptrCast(&state.voxel_debug_view));
 
         _ = c.ImGui_SliderFloat3("light dir", @ptrCast(&state.light_dir), 0.0, 1.0);
@@ -535,12 +567,10 @@ pub const GuiState = struct {
         _ = c.ImGui_SliderFloat("escape radius", &state.escape_r, 0.01, 16.0);
         _ = c.ImGui_SliderFloat("fractal scale", &state.fractal_scale, 0.01, 2.0);
         _ = c.ImGui_SliderFloat("fractal density", &state.fractal_density, 0.01, 512.0);
+        _ = c.ImGui_SliderFloat("ray penetration factor", &state.ray_penetration_factor, 0.01, 1.0);
         _ = c.ImGui_SliderInt("GI samples", @ptrCast(&state.gi_samples), 0, 4096);
         _ = c.ImGui_SliderFloat("temporal blend factor", &state.temporal_blend_factor, 0.01, 1.0);
         _ = c.ImGui_SliderFloat("min background attenuation", &state.min_background_attenuation, 0.0, 1.0);
         _ = c.ImGui_SliderFloat("t max", &state.t_max, 0.1, 1000.0);
-        var pow = @log10(state.dt_min);
-        _ = c.ImGui_SliderFloat("dt min (10^this)", &pow, -10.0, 0.0);
-        state.dt_min = std.math.pow(f32, 10.0, pow);
     }
 };

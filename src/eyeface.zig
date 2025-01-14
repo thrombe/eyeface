@@ -448,6 +448,7 @@ pub const AppState = struct {
     frame: u32 = 0,
     time: f32 = 0,
     deltatime: f32 = 0,
+    fps_cap: u32 = 500,
 
     transform_generator: Uniforms.TransformSet.Builder.Generator = .{},
     transforms: Uniforms.TransformSet.Builder,
@@ -639,6 +640,7 @@ pub const GuiState = struct {
 
         _ = c.ImGui_SliderFloat("Speed", &state.camera.speed, 0.1, 10.0);
         _ = c.ImGui_SliderFloat("Sensitivity", &state.camera.sensitivity, 0.001, 2.0);
+        _ = c.ImGui_SliderInt("FPS cap", @ptrCast(&state.fps_cap), 5, 500);
 
         _ = c.ImGui_SliderFloat("Visual Scale", &state.visual_scale, 0.01, 10.0);
         _ = c.ImGui_SliderFloat("Visual Transform Lambda", &state.visual_transform_lambda, 0.0, 25.0);

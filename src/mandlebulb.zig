@@ -370,6 +370,7 @@ pub const AppState = struct {
     frame: u32 = 0,
     time: f32 = 0,
     deltatime: f32 = 0,
+    fps_cap: u32 = 500,
 
     voxels: struct {
         side: u32 = 100,
@@ -519,7 +520,6 @@ pub const AppState = struct {
 pub const GuiState = struct {
     frame_times: [10]f32 = std.mem.zeroes([10]f32),
     frame_times_i: usize = 10,
-    fps_cap: u32 = 15,
 
     pub fn tick(self: *@This(), state: *AppState, lap: u64) void {
         const delta = @as(f32, @floatFromInt(lap)) / @as(f32, @floatFromInt(std.time.ns_per_s));
@@ -546,6 +546,7 @@ pub const GuiState = struct {
 
         _ = c.ImGui_SliderFloat("Speed", &state.camera.speed, 0.1, 10.0);
         _ = c.ImGui_SliderFloat("Sensitivity", &state.camera.sensitivity, 0.001, 2.0);
+        _ = c.ImGui_SliderInt("FPS cap", @ptrCast(&state.fps_cap), 5, 500);
 
         reset = reset or c.ImGui_Button("Reset render state");
 

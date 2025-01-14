@@ -57,6 +57,12 @@ pub fn main() !void {
                 continue;
             }
 
+            const frametime = @as(f32, @floatFromInt(timer.read())) / std.time.ns_per_ms;
+            const min_frametime = 1.0 / @as(f32, @floatFromInt(app_state.fps_cap)) * std.time.ms_per_s;
+            if (frametime < min_frametime) {
+                std.time.sleep(@intFromFloat(std.time.ns_per_ms * (min_frametime - frametime)));
+            }
+
             const lap = timer.lap();
             app_state.tick(lap, engine.window);
 

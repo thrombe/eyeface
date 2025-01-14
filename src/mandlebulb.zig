@@ -401,6 +401,7 @@ pub const AppState = struct {
     voxel_debug_view: bool = false,
 
     rng: std.Random.Xoshiro256,
+    reset_render_state: Fuse = .{},
 
     pub fn init(window: *Engine.Window) !@This() {
         const mouse = window.poll_mouse();

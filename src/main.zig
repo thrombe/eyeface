@@ -77,7 +77,11 @@ pub fn main() !void {
                 std.debug.print("{any}\n", .{present});
             }
 
-            if (engine.window.resize_fuse.unfuse() or present == .suboptimal or app.stages.update()) {
+            if (engine.window.resize_fuse.unfuse() or
+                present == .suboptimal or
+                app.stages.update() or
+                app_state.reset_render_state.unfuse())
+            {
                 renderer_state.deinit(&engine.graphics.device);
                 renderer_state = try RendererState.init(&app, &engine, &app_state);
 

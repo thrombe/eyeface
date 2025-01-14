@@ -1,11 +1,6 @@
 #version 460
 
-struct Mouse {
-    int x;
-    int y;
-    uint left;
-    uint right;
-};
+#include <common.glsl>
 
 struct Uniforms {
     mat4 transforms[5];
@@ -43,31 +38,6 @@ struct Uniforms {
 layout(set = 0, binding = 0) uniform Ubo {
     Uniforms ubo;
 };
-
-uint rand_xorshift(uint state) {
-    state ^= (state << 13);
-    state ^= (state >> 17);
-    state ^= (state << 5);
-    return state;
-}
-
-int to1D(ivec3 pos, int size) {
-    return pos.x + pos.y * size + pos.z * size * size;
-}
-
-int to1D(ivec2 pos, int size) {
-    return pos.x + pos.y * size;
-}
-
-ivec2 to2D(int id, int side) {
-    ivec2 pos = ivec2(id % side, (id / side)%side);
-    return pos;
-}
-
-ivec3 to3D(int id, int side) {
-    ivec3 pos = ivec3(id % side, (id / side)%side, (id / (side * side))%side);
-    return pos;
-}
 
 struct PixelMeta {
     vec3 grid_pos;
@@ -124,7 +94,7 @@ float voxelGridSample(ivec3 pos) {
 #ifdef EYEFACE_CLEAR_BUFS
     layout (local_size_x = 8, local_size_y = 8) in;
     void main() {
-        uint id = gl_LocalInvocationID.x + gl_LocalInvocationID.y * gl_WorkGroupSize.x + gl_WorkGroupID.x * 64;
+        int id = global_id;
 
         uint side = ubo.voxel_grid_side;
         if (id < side * side * side) {
@@ -145,7 +115,7 @@ float voxelGridSample(ivec3 pos) {
 #ifdef EYEFACE_ITERATE
     layout (local_size_x = 8, local_size_y = 8) in;
     void main() {
-        uint id = gl_LocalInvocationID.x + gl_LocalInvocationID.y * gl_WorkGroupSize.x + gl_WorkGroupID.x * 64;
+        int id = global_id;
         vec4 pos = points[id];
 
         uint seed = rand_xorshift(id + ubo.frame * 11335474);
@@ -259,8 +229,7 @@ float voxelGridSample(ivec3 pos) {
 #ifdef EYEFACE_PROJECT
     layout (local_size_x = 8, local_size_y = 8) in;
     void main() {
-        uint id = gl_LocalInvocationID.x + gl_LocalInvocationID.y * gl_WorkGroupSize.x + gl_WorkGroupID.x * 64;
-        // uint id = gl_GlobalInvocationID.x;
+        int id = global_id;
         vec4 pos = points[id];
 
         uint seed = rand_xorshift(id + ubo.frame * 13324848);
@@ -335,7 +304,7 @@ float voxelGridSample(ivec3 pos) {
 #ifdef EYEFACE_OCCLUSION
     layout (local_size_x = 8, local_size_y = 8) in;
     void main() {
-        int id = int(gl_LocalInvocationID.x) + int(gl_LocalInvocationID.y) * int(gl_WorkGroupSize.x) + int(gl_WorkGroupID.x) * 64;
+        int id = global_id;
         int side = ubo.voxel_grid_side;
         ivec3 pos = to3D(id, side);
         float o = 0.0;
@@ -355,13 +324,13 @@ float voxelGridSample(ivec3 pos) {
 #ifdef EYEFACE_DRAW
     layout (local_size_x = 8, local_size_y = 8) in;
     void main() {
-        int id = int(gl_LocalInvocationID.x) + int(gl_LocalInvocationID.y) * int(gl_WorkGroupSize.x) + int(gl_WorkGroupID.x) * 64;
+        int id = global_id;
 
         if (ubo.width * ubo.height <= id) {
             return;
         }
 
-        vec4 f_color = vec4(0.0);
+        vec3 f_color = vec3(0.0);
 
         vec3 vpos = gbuffer[id].visual_pos;
         float dist = length(vpos - ubo.eye.xyz);
@@ -391,21 +360,15 @@ float voxelGridSample(ivec3 pos) {
             }
             value = pow(max(value, 0.0)*ubo.occlusion_multiplier, ubo.occlusion_attenuation);
 
-            f_color = vec4(mix(ubo.occlusion_color.xyz, ubo.sparse_color.xyz, mix(value, 0.0, dist)), 1.0);
+            f_color = vec3(mix(ubo.occlusion_color.xyz, ubo.sparse_color.xyz, mix(value, 0.0, dist)));
         } else if (type == 1) {
-            f_color = vec4(mix(ubo.sparse_color.xyz, ubo.occlusion_color.xyz, dist), 1.0);
+            f_color = vec3(mix(ubo.sparse_color.xyz, ubo.occlusion_color.xyz, dist));
         } else {
-            f_color = ubo.background_color;
+            f_color = ubo.background_color.xyz;
         }
 
-        float gamma = 2.1;
-        f_color = vec4(
-            pow(f_color.x, gamma),
-            pow(f_color.y, gamma),
-            pow(f_color.z, gamma),
-            1.0
-        );
+        f_color = gamma_correction(f_color, 2.1);
 
-        imageStore(screen, to2D(id, int(ubo.width)), f_color);
+        imageStore(screen, to2D(id, int(ubo.width)), vec4(f_color, 1.0));
     }
 #endif // EYEFACE_DRAW

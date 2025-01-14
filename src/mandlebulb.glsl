@@ -14,11 +14,12 @@ struct Uniforms {
     uint monitor_width;
     uint monitor_height;
 
+    float exposure;
+    float gamma;
+
     uint voxel_grid_side;
     uint voxel_debug_view;
     uint pad1;
-    uint pad2;
-    uint pad3;
 
     vec4 background_color1;
     vec4 background_color2;
@@ -206,7 +207,8 @@ vec4 gather(vec3 ro, vec3 rd) {
         }
     } else {
         // - [Volume Rendering](https://www.scratchapixel.com/lessons/3d-basic-rendering/volume-rendering-for-developers/intro-volume-rendering.html)
-        const float stepSize = ubo.gather_step_factor / ubo.fractal_density;
+        // step size is fun to play with in combination with aliasing factor. this gives more control at lower values
+        const float stepSize = pow(ubo.gather_step_factor/2.5, 2.5) / ubo.fractal_density;
 
         // a random phase to offset steps by - for preventing aliasing
         float phase = pow(random(), exp(ubo.stylistic_aliasing_factor));
@@ -331,8 +333,9 @@ vec4 gather(vec3 ro, vec3 rd) {
 
         vec3 f_color = gbuffer[id].xyz;
 
+        f_color = linear_tonemap(f_color, ubo.exposure);
         f_color = tanh_tonemap(f_color);
-        f_color = gamma_correction(f_color, 2.1);
+        f_color = gamma_correction(f_color, ubo.gamma);
         imageStore(screen, ipos, vec4(f_color, 1.0));
     }
 #endif // EYEFACE_DRAW

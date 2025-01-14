@@ -92,6 +92,10 @@ vec3 aces_tonemap(vec3 x) {
     return (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14);
 }
 
+vec3 linear_tonemap(vec3 x, float exposure) {
+    return x * exposure;
+}
+
 vec3 gamma_correction(vec3 x, float gamma) {
     return vec3(
         pow(x.x, gamma),

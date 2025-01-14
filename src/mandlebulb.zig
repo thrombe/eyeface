@@ -53,11 +53,12 @@ pub const Uniforms = extern struct {
     monitor_width: u32,
     monitor_height: u32,
 
+    exposure: f32,
+    gamma: f32,
+
     voxel_grid_side: u32,
     voxel_debug_view: u32,
     pad1: u32 = 0,
-    pad2: u32 = 0,
-    pad3: u32 = 0,
 
     background_color1: Vec4,
     background_color2: Vec4,
@@ -372,6 +373,9 @@ pub const AppState = struct {
     deltatime: f32 = 0,
     fps_cap: u32 = 500,
 
+    exposure: f32 = 1.0,
+    gamma: f32 = 2.1,
+
     voxels: struct {
         side: u32 = 100,
         max_side: u32 = 500,
@@ -387,8 +391,8 @@ pub const AppState = struct {
     light_dir: Vec4 = .{ .x = 1.0, .y = 1.0, .z = 1.0 },
     fractal_iterations: u32 = 10,
     march_iterations: u32 = 512,
-    gather_iterations: u32 = 1024,
-    gather_step_factor: f32 = 0.6,
+    gather_iterations: u32 = 128,
+    gather_step_factor: f32 = 2.5,
     march_step_factor: f32 = 2.0,
     escape_r: f32 = 1.2,
     fractal_scale: f32 = 0.45,
@@ -483,6 +487,8 @@ pub const AppState = struct {
             .trap_color2 = self.trap_color2,
             .emission_color1 = self.emission_color1,
             .emission_color2 = self.emission_color2,
+            .exposure = self.exposure,
+            .gamma = self.gamma,
             .frame = self.frame,
             .time = self.time,
             .deltatime = self.deltatime,
@@ -550,6 +556,9 @@ pub const GuiState = struct {
 
         reset = reset or c.ImGui_Button("Reset render state");
 
+        _ = c.ImGui_SliderFloat("exposure", &state.exposure, 0.0, 2.0);
+        _ = c.ImGui_SliderFloat("gamma", &state.gamma, 0.0, 10.0);
+
         reset = reset or c.ImGui_ColorEdit3("Background Color 1", @ptrCast(&state.background_color1), c.ImGuiColorEditFlags_Float);
         reset = reset or c.ImGui_ColorEdit3("Background Color 2", @ptrCast(&state.background_color2), c.ImGuiColorEditFlags_Float);
         reset = reset or c.ImGui_ColorEdit3("trap color 1", @ptrCast(&state.trap_color1), c.ImGuiColorEditFlags_Float);
@@ -565,7 +574,7 @@ pub const GuiState = struct {
         reset = reset or c.ImGui_SliderInt("Fractal iterations", @ptrCast(&state.fractal_iterations), 0, 50);
         reset = reset or c.ImGui_SliderInt("March iterations", @ptrCast(&state.march_iterations), 0, 1024);
         _ = c.ImGui_SliderInt("Gather iterations", @ptrCast(&state.gather_iterations), 0, 4096);
-        _ = c.ImGui_SliderFloat("gather step factor", &state.gather_step_factor, 0.01, 2.0);
+        _ = c.ImGui_SliderFloat("gather step factor", &state.gather_step_factor, 0.5, 10.0);
         reset = reset or c.ImGui_SliderFloat("march step factor", &state.march_step_factor, 0.01, 16.0);
         reset = reset or c.ImGui_SliderFloat("escape radius", &state.escape_r, 0.01, 16.0);
         reset = reset or c.ImGui_SliderFloat("fractal scale", &state.fractal_scale, 0.01, 2.0);

@@ -79,6 +79,7 @@ pub const Uniforms = extern struct {
     gi_samples: u32,
     temporal_blend_factor: f32,
     min_background_color_contribution: f32,
+    stylistic_aliasing_factor: f32,
     t_max: f32,
 
     pub const Mouse = extern struct { x: i32, y: i32, left: u32, right: u32 };
@@ -395,6 +396,7 @@ pub const AppState = struct {
     gi_samples: u32 = 64,
     temporal_blend_factor: f32 = 0.9,
     min_background_color_contribution: f32 = 0.04,
+    stylistic_aliasing_factor: f32 = 0.0,
     t_max: f32 = 50.0,
     voxel_debug_view: bool = false,
 
@@ -500,6 +502,7 @@ pub const AppState = struct {
             .gi_samples = self.gi_samples,
             .temporal_blend_factor = self.temporal_blend_factor,
             .min_background_color_contribution = self.min_background_color_contribution,
+            .stylistic_aliasing_factor = self.stylistic_aliasing_factor,
             .voxel_debug_view = @intCast(@intFromBool(self.voxel_debug_view)),
             .t_max = self.t_max,
         };

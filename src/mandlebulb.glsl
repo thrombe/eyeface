@@ -40,6 +40,7 @@ struct Uniforms {
     int gi_samples;
     float temporal_blend_factor;
     float min_background_color_contribution;
+    float stylistic_aliasing_factor;
     float t_max;
 };
 
@@ -206,7 +207,9 @@ vec4 gather(vec3 ro, vec3 rd) {
     } else {
         // - [Volume Rendering](https://www.scratchapixel.com/lessons/3d-basic-rendering/volume-rendering-for-developers/intro-volume-rendering.html)
         const float stepSize = ubo.gather_step_factor / ubo.fractal_density;
-        float phase = random();
+
+        // a random phase to offset steps by - for preventing aliasing
+        float phase = pow(random(), exp(ubo.stylistic_aliasing_factor));
         for (int i = 0; i<ubo.gather_iterations && transparency > ubo.min_background_color_contribution && t<ubo.t_max; i++) {
             vec3 p = ro + rd * t;
         

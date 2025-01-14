@@ -43,6 +43,7 @@ struct Uniforms {
     float min_background_color_contribution;
     float stylistic_aliasing_factor;
     float t_max;
+    float bulb_z_pow;
 };
 
 layout(set = 0, binding = 0) uniform Ubo {
@@ -116,35 +117,38 @@ BulbResult bulb(vec3 pos) {
     
     for (int i = 0; i < ubo.fractal_iterations && r2 < ubo.escape_r * ubo.escape_r; i++) {
         // -[](https://www.shadertoy.com/view/stc3Ws)
-        vec3 w2 = w * w;
-        vec3 w4 = w2 * w2;
-        float k1 = w2.x * w2.z;
-        float k2 = w2.x + w2.z;
-        float k3 = w4.x + w4.z + w2.y * (w2.y - 6.0 * k2) + 2.0 * k1;
-        float k4 = k2 * k2 * k2;
-        float k5 = k3 * inversesqrt(k4 * k4 * k2);
-        float k6 = w.y * (k2 - w2.y);
-        w.x = pos.x + 64.0 * k6 * k5 * w.x * w.z * (w2.x - w2.z) * (w4.x - 6.0 * k1 + w4.z);
-        w.y = pos.y - 16.0 * k6 * k6 * k2 + k3 * k3;
-        w.z = pos.z - 8.0 * k6 * k5 * (w4.x * (w4.x - 28.0 * k1 + 70.0 * w4.z) + w4.z * (w4.z - 28.0 * k1));
+        // float p = 8.0;
+        // vec3 w2 = w * w;
+        // vec3 w4 = w2 * w2;
+        // float k1 = w2.x * w2.z;
+        // float k2 = w2.x + w2.z;
+        // float k3 = w4.x + w4.z + w2.y * (w2.y - 6.0 * k2) + 2.0 * k1;
+        // float k4 = k2 * k2 * k2;
+        // float k5 = k3 * inversesqrt(k4 * k4 * k2);
+        // float k6 = w.y * (k2 - w2.y);
+        // w.x = pos.x + 64.0 * k6 * k5 * w.x * w.z * (w2.x - w2.z) * (w4.x - 6.0 * k1 + w4.z);
+        // w.y = pos.y - 16.0 * k6 * k6 * k2 + k3 * k3;
+        // w.z = pos.z - 8.0 * k6 * k5 * (w4.x * (w4.x - 28.0 * k1 + 70.0 * w4.z) + w4.z * (w4.z - 28.0 * k1));
 
         // - [Inigo Quilez mandlebulb](https://iquilezles.org/articles/mandelbulb/)
         // // extract polar coordinates
         // float p = mod(ubo.time/5.0, 10.0);
-        // float p = 8.0;
-        // float wr = sqrt(dot(w, w));
-        // float wo = acos(w.y / wr);
-        // float wi = atan(w.x, w.z);
-        // // scale and rotate the point
-        // wr = pow(wr, p);
-        // wo = wo * p;
-        // wi = wi * p;
-        // // convert back to cartesian coordinates
-        // w.x = pos.x + wr * sin(wo) * sin(wi);
-        // w.y = pos.y + wr * cos(wo);
-        // w.z = pos.z + wr * sin(wo) * cos(wi);
+        float p = ubo.bulb_z_pow;
+        float wr = sqrt(dot(w, w));
+        float wo = acos(w.y / wr);
+        float wi = atan(w.x, w.z);
+        // scale and rotate the point
+        wr = pow(wr, p);
+        wo = wo * p;
+        wi = wi * p;
+        // convert back to cartesian coordinates
+        // MOUS: apparently it's much faster when you don't call sin() twice :/
+        float k1 = sin(wo);
+        w.x = pos.x + wr * k1 * sin(wi);
+        w.y = pos.y + wr * cos(wo);
+        w.z = pos.z + wr * k1 * cos(wi);
 
-        dr = dr * pow(r2, 3.5) * 8.0 + 1.0;
+        dr = dr * pow(r2, p/2.0) * p + 1.0;
         r2 = dot(w, w);
         trap = min(abs(w), trap);
     }

@@ -82,6 +82,7 @@ pub const Uniforms = extern struct {
     min_background_color_contribution: f32,
     stylistic_aliasing_factor: f32,
     t_max: f32,
+    bulb_z_pow: f32,
 
     pub const Mouse = extern struct { x: i32, y: i32, left: u32, right: u32 };
     pub const Camera = extern struct {
@@ -403,6 +404,7 @@ pub const AppState = struct {
     min_background_color_contribution: f32 = 0.04,
     stylistic_aliasing_factor: f32 = 0.0,
     t_max: f32 = 50.0,
+    bulb_z_pow: f32 = 8.0,
     voxel_debug_view: bool = false,
 
     rng: std.Random.Xoshiro256,
@@ -513,6 +515,7 @@ pub const AppState = struct {
             .stylistic_aliasing_factor = self.stylistic_aliasing_factor,
             .voxel_debug_view = @intCast(@intFromBool(self.voxel_debug_view)),
             .t_max = self.t_max,
+            .bulb_z_pow = self.bulb_z_pow,
         };
     }
 
@@ -585,6 +588,7 @@ pub const GuiState = struct {
         reset = reset or c.ImGui_SliderFloat("min background color contribution", &state.min_background_color_contribution, 0.0, 1.0);
         _ = c.ImGui_SliderFloat("stylistic aliasing factor", &state.stylistic_aliasing_factor, 0.0, 5.0);
         _ = c.ImGui_SliderFloat("t max", &state.t_max, 0.1, 1000.0);
+        reset = reset or c.ImGui_SliderFloat("bulb z pow", &state.bulb_z_pow, 0.1, 20);
 
         if (reset) {
             _ = state.reset_render_state.fuse();

@@ -247,3 +247,23 @@ pub const GuiEngine = struct {
         }
     };
 };
+
+fn enum_dropdown(enum_ptr: anytype, title: [*:0]const u8) void {
+    const opt_modes = comptime blk: {
+        const fields = @typeInfo(@TypeOf(enum_ptr.*)).Enum.fields;
+        var arr: [fields.len][*:0]const u8 = undefined;
+        for (fields, 0..) |field, i| {
+            arr[i] = field.name;
+        }
+        break :blk arr;
+    };
+    var opt_index: c_int = 0;
+    for (opt_modes, 0..) |mode, i| {
+        if (std.mem.eql(u8, std.mem.span(mode), @tagName(enum_ptr.*))) {
+            opt_index = @intCast(i);
+        }
+    }
+    c.ImGui_SetNextItemWidth(200);
+    _ = c.ImGui_ComboChar(title, &opt_index, &opt_modes, opt_modes.len);
+    enum_ptr.* = std.meta.stringToEnum(@TypeOf(enum_ptr.*), std.mem.span(opt_modes[@intCast(opt_index)])).?;
+}

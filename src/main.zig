@@ -64,7 +64,7 @@ pub fn main() !void {
             }
 
             const lap = timer.lap();
-            app_state.tick(lap, engine.window);
+            try app_state.tick(lap, &engine, &app);
 
             gui_renderer.render_start();
             gui_state.tick(&app_state, lap);

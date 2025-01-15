@@ -507,7 +507,8 @@ pub const AppState = struct {
         };
     }
 
-    pub fn tick(self: *@This(), lap: u64, window: *Engine.Window) void {
+    pub fn tick(self: *@This(), lap: u64, engine: *Engine, app: *App) !void {
+        const window = engine.window;
         const delta = @as(f32, @floatFromInt(lap)) / @as(f32, @floatFromInt(std.time.ns_per_s));
         // std.debug.print("fps: {d}\n", .{@as(u32, @intFromFloat(1.0 / delta))});
         const w = window.is_pressed(c.GLFW_KEY_W);
@@ -550,6 +551,17 @@ pub const AppState = struct {
         if (1.0 - self.t < 0.01 and !self.pause_generator) {
             self.t = 0;
             self.target_transforms = self.transform_generator.generate(self.rng.random());
+        }
+
+        const p = window.is_pressed(c.GLFW_KEY_P);
+        if (p) {
+            try render_utils.dump_image_to_file(
+                &app.screen_image,
+                &engine.graphics,
+                app.command_pool,
+                window.extent,
+                "./images",
+            );
         }
     }
 

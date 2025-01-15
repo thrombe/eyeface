@@ -424,7 +424,8 @@ pub const AppState = struct {
         };
     }
 
-    pub fn tick(self: *@This(), lap: u64, window: *Engine.Window) void {
+    pub fn tick(self: *@This(), lap: u64, engine: *Engine, app: *App) !void {
+        const window = engine.window;
         const delta = @as(f32, @floatFromInt(lap)) / @as(f32, @floatFromInt(std.time.ns_per_s));
         const w = window.is_pressed(c.GLFW_KEY_W);
         const a = window.is_pressed(c.GLFW_KEY_A);
@@ -459,6 +460,17 @@ pub const AppState = struct {
         self.frame += 1;
         self.time += delta;
         self.deltatime = delta;
+
+        const p = window.is_pressed(c.GLFW_KEY_P);
+        if (p) {
+            try render_utils.dump_image_to_file(
+                &app.screen_image,
+                &engine.graphics,
+                app.command_pool,
+                window.extent,
+                "./images",
+            );
+        }
     }
 
     pub fn uniforms(self: *const @This(), window: *Engine.Window) Uniforms {

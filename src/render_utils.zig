@@ -1704,6 +1704,56 @@ pub fn copyImageToBuffer(
     try device.queueWaitIdle(ctx.graphics_queue.handle);
 }
 
+pub fn dump_image_to_file(
+    image: *Image,
+    ctx: *Engine.VulkanContext,
+    pool: vk.CommandPool,
+    copy_extent: vk.Extent2D,
+    path: []const u8,
+) !void {
+    const buf = try image.copy_to_host(ctx, pool, .{
+        .width = copy_extent.width,
+        .height = copy_extent.height,
+        .depth = 1,
+    });
+    defer allocator.free(buf);
+
+    const pixels = try allocator.alloc(f32, copy_extent.width * copy_extent.height * 4);
+    defer allocator.free(pixels);
+
+    switch (image.format) {
+        .r16g16b16a16_sfloat => {
+            const src = std.mem.bytesAsSlice(f16, buf);
+            for (src[0..pixels.len], 0..) |f, i| {
+                pixels[i] = @floatCast(f);
+            }
+        },
+        .r8g8b8a8_srgb => {
+            const src = std.mem.bytesAsSlice(u8, buf);
+            for (src[0..pixels.len], 0..) |f, i| {
+                pixels[i] = @as(f32, @floatFromInt(f)) / 255.0;
+            }
+        },
+        else => return error.UnknownImageFormat,
+    }
+
+    const blob = try utils.ImageMagick.encode_rgba_image(pixels, copy_extent.width, copy_extent.height);
+    defer allocator.free(blob);
+
+    const ts = std.time.timestamp();
+    const filename = try std.fmt.allocPrint(allocator, "{d}.png", .{ts});
+    defer allocator.free(filename);
+
+    try std.fs.cwd().makePath(path);
+
+    const joined_path = try std.fs.path.join(allocator, &[_][]const u8{ path, filename });
+    defer allocator.free(joined_path);
+
+    const file = try std.fs.cwd().createFile(joined_path, .{});
+    defer file.close();
+    try file.writeAll(blob);
+}
+
 pub fn ShaderCompiler(meta: type, stages: type) type {
     return struct {
         pub const StageMap = std.EnumArray(stages, Compiled);

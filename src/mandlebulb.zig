@@ -375,7 +375,7 @@ pub const AppState = struct {
     fps_cap: u32 = 500,
 
     exposure: f32 = 1.0,
-    gamma: f32 = 2.1,
+    gamma: f32 = 1.0,
 
     voxels: struct {
         side: u32 = 100,

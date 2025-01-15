@@ -1177,7 +1177,15 @@ pub const Swapchain = struct {
 
         const surface_format = blk: {
             const preferred = vk.SurfaceFormatKHR{
-                .format = .b8g8r8a8_srgb,
+                // we use non-gamma corrected buffer (non-srgb)
+                // so that dumping image using imagemagick and displaying to screen does not have weird gamma issues
+                // i dug for about an hour and still can't figure out why this works.
+                // - ig copying to srgb image applies gamma encoding?
+                // - can't figure out if dumping and loading images using imagemagick also does gamma encoding/decoding
+                // - do i load random images in unorm images?
+                //   - does that do gamma decoding?
+                // - do different image viewrs do some gamma encode/decode when loading from png?
+                .format = .b8g8r8a8_unorm,
                 .color_space = .srgb_nonlinear_khr,
             };
 

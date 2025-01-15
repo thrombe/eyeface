@@ -339,7 +339,7 @@ vec4 gather(vec3 ro, vec3 rd) {
 
         f_color = linear_tonemap(f_color, ubo.exposure);
         f_color = tanh_tonemap(f_color);
-        f_color = gamma_correction(f_color, ubo.gamma);
+        f_color = gamma_decode(f_color, ubo.gamma);
         imageStore(screen, ipos, vec4(f_color, 1.0));
     }
 #endif // EYEFACE_DRAW

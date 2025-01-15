@@ -96,7 +96,17 @@ vec3 linear_tonemap(vec3 x, float exposure) {
     return x * exposure;
 }
 
-vec3 gamma_correction(vec3 x, float gamma) {
+// prepare for display
+vec3 gamma_encode(vec3 x, float gamma) {
+    return vec3(
+        pow(x.x, 1.0/gamma),
+        pow(x.y, 1.0/gamma),
+        pow(x.z, 1.0/gamma)
+    );
+}
+
+// restore to linear
+vec3 gamma_decode(vec3 x, float gamma) {
     return vec3(
         pow(x.x, gamma),
         pow(x.y, gamma),

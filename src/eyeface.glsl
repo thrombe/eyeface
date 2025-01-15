@@ -367,8 +367,6 @@ float voxelGridSample(ivec3 pos) {
             f_color = ubo.background_color.xyz;
         }
 
-        f_color = gamma_correction(f_color, 2.1);
-
         imageStore(screen, to2D(id, int(ubo.width)), vec4(f_color, 1.0));
     }
 #endif // EYEFACE_DRAW

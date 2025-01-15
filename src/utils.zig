@@ -462,6 +462,39 @@ pub const ImageMagick = struct {
             },
         }
     }
+
+    pub fn encode_rgba_image(pixels: []f32, width: usize, height: usize) ![]u8 {
+        magick.MagickWandGenesis();
+        const wand = magick.NewMagickWand() orelse {
+            return error.CouldNotGetWand;
+        };
+        defer _ = magick.DestroyMagickWand(wand);
+
+        const pwand = magick.NewPixelWand();
+        defer _ = magick.DestroyPixelWand(pwand);
+
+        _ = magick.PixelSetColor(pwand, &[_]u8{ 0, 0, 0, 0 });
+
+        if (magick.MagickNewImage(wand, width, height, pwand) == magick.MagickFalse) {
+            return error.couldnotcreatenewimage;
+        }
+
+        if (magick.MagickImportImagePixels(wand, 0, 0, width, height, "RGBA", magick.FloatPixel, pixels.ptr) == magick.MagickFalse) {
+            return error.CouldNotImportImage;
+        }
+
+        if (magick.MagickSetImageFormat(wand, "PNG") == magick.MagickFalse) {
+            return error.CouldNotSetFormat;
+        }
+        var size: usize = 0;
+        const blob = magick.MagickGetImageBlob(wand, &size);
+        defer _ = magick.MagickRelinquishMemory(blob);
+
+        const cloned_blob = try allocator.dupe(u8, blob[0..size]);
+        errdefer allocator.free(cloned_blob);
+
+        return cloned_blob;
+    }
 };
 
 pub const Glslc = struct {

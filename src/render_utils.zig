@@ -1003,6 +1003,51 @@ pub const CmdBuffer = struct {
         }
     }
 
+    pub fn blitIntoImage(self: *@This(), device: *Device, v: struct {
+        typ: vk.ImageAspectFlags = .{ .color_bit = true },
+        image: vk.Image,
+        size: vk.Extent2D,
+        target_image: vk.Image,
+        target_size: vk.Extent2D,
+    }) void {
+        const blit = [_]vk.ImageBlit2{.{
+            .src_subresource = .{
+                .aspect_mask = v.typ,
+                .mip_level = 0,
+                .base_array_layer = 0,
+                .layer_count = 1,
+            },
+            .src_offsets = .{
+                .{ .x = 0, .y = 0, .z = 0 },
+                .{ .x = @intCast(v.size.width), .y = @intCast(v.size.height), .z = 1 },
+            },
+            .dst_subresource = .{
+                .aspect_mask = v.typ,
+                .mip_level = 0,
+                .base_array_layer = 0,
+                .layer_count = 1,
+            },
+            .dst_offsets = .{
+                .{ .x = 0, .y = 0, .z = 0 },
+                .{ .x = @intCast(v.target_size.width), .y = @intCast(v.target_size.height), .z = 1 },
+            },
+        }};
+
+        const blitinfo = vk.BlitImageInfo2{
+            .src_image = v.image,
+            .src_image_layout = .transfer_src_optimal,
+            .dst_image = v.target_image,
+            .dst_image_layout = .transfer_dst_optimal,
+            .region_count = blit.len,
+            .p_regions = &blit,
+            .filter = .linear,
+        };
+
+        for (self.bufs) |cmdbuf| {
+            device.cmdBlitImage2(cmdbuf, &blitinfo);
+        }
+    }
+
     pub fn blitIntoSwapchain(self: *@This(), device: *Device, v: struct {
         typ: vk.ImageAspectFlags = .{ .color_bit = true },
         image: vk.Image,
@@ -1068,6 +1113,7 @@ pub const CmdBuffer = struct {
             .swapchain = v.swapchain,
         });
         self.blitIntoSwapchain(device, .{
+            .typ = v.typ,
             .image = v.image,
             .size = v.swapchain.extent,
             .swapchain = v.swapchain,
@@ -1077,6 +1123,51 @@ pub const CmdBuffer = struct {
             .new_layout = .color_attachment_optimal,
             .queue_family_index = v.queue_family,
             .swapchain = v.swapchain,
+        });
+
+        self.transitionImg(device, .{
+            .image = v.image,
+            .layout = .transfer_src_optimal,
+            .new_layout = v.image_layout,
+            .queue_family_index = v.queue_family,
+        });
+    }
+
+    pub fn drawIntoImage(self: *@This(), device: *Device, v: struct {
+        typ: vk.ImageAspectFlags = .{ .color_bit = true },
+        image: vk.Image,
+        image_layout: vk.ImageLayout,
+        size: vk.Extent2D,
+        target_image: vk.Image,
+        target_image_layout: vk.ImageLayout,
+        target_size: vk.Extent2D,
+        queue_family: u32,
+    }) void {
+        self.transitionImg(device, .{
+            .image = v.image,
+            .layout = v.image_layout,
+            .new_layout = .transfer_src_optimal,
+            .queue_family_index = v.queue_family,
+        });
+
+        self.transitionImg(device, .{
+            .image = v.target_image,
+            .layout = v.target_image_layout,
+            .new_layout = .transfer_dst_optimal,
+            .queue_family_index = v.queue_family,
+        });
+        self.blitIntoImage(device, .{
+            .typ = v.typ,
+            .image = v.image,
+            .size = v.size,
+            .target_image = v.target_image,
+            .target_size = v.target_size,
+        });
+        self.transitionImg(device, .{
+            .image = v.target_image,
+            .layout = .transfer_dst_optimal,
+            .new_layout = v.target_image_layout,
+            .queue_family_index = v.queue_family,
         });
 
         self.transitionImg(device, .{

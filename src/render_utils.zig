@@ -443,7 +443,9 @@ pub const RenderPass = struct {
 
 pub const Image = struct {
     size: u64,
+    extent: vk.Extent3D,
     image: vk.Image,
+    format: vk.Format,
     memory: vk.DeviceMemory,
     view: vk.ImageView,
     sampler: vk.Sampler,
@@ -534,6 +536,8 @@ pub const Image = struct {
             .view = view,
             .size = mem_reqs.size,
             .sampler = sampler,
+            .extent = v.extent,
+            .format = v.format,
             .io = .{
                 .sampler = sampler,
                 .image_view = view,

@@ -579,6 +579,40 @@ pub const Image = struct {
         try device.queueWaitIdle(ctx.graphics_queue.handle);
     }
 
+    pub fn copy_to_host(self: *@This(), ctx: *Engine.VulkanContext, pool: vk.CommandPool, copy_extent: vk.Extent3D) ![]align(8) u8 {
+        const unit_size: usize = switch (self.format) {
+            .r16g16b16a16_sfloat => 4 * 2,
+            .r8g8b8a8_srgb => 4,
+            else => return error.UnknownImageFormat,
+        };
+        const size = copy_extent.width * copy_extent.height * unit_size;
+        const staging_buffer = try ctx.device.createBuffer(&.{
+            .size = size,
+            .usage = .{ .transfer_dst_bit = true },
+            .sharing_mode = .exclusive,
+        }, null);
+        defer ctx.device.destroyBuffer(staging_buffer, null);
+        const staging_mem_reqs = ctx.device.getBufferMemoryRequirements(staging_buffer);
+        const staging_memory = try ctx.allocate(staging_mem_reqs, .{ .host_visible_bit = true, .host_coherent_bit = true });
+        defer ctx.device.freeMemory(staging_memory, null);
+        try ctx.device.bindBufferMemory(staging_buffer, staging_memory, 0);
+
+        try copyImageToBuffer(ctx, &ctx.device, pool, self.image, self.io.image_layout, staging_buffer, copy_extent);
+
+        const cpu_memory = try allocator.allocWithOptions(u8, size, 8, null);
+        errdefer allocator.free(cpu_memory);
+
+        {
+            const data = try ctx.device.mapMemory(staging_memory, 0, vk.WHOLE_SIZE, .{});
+            defer ctx.device.unmapMemory(staging_memory);
+
+            const mapped_memory: [*]u8 = @ptrCast(@alignCast(data));
+            @memcpy(cpu_memory, mapped_memory[0..cpu_memory.len]);
+        }
+
+        return cpu_memory;
+    }
+
     pub fn deinit(self: *@This(), device: *Device) void {
         device.destroyImageView(self.view, null);
         device.freeMemory(self.memory, null);
@@ -1609,6 +1643,55 @@ pub fn copyBuffer(
         .size = size,
     };
     cmdbuf.copyBuffer(src, dst, 1, @ptrCast(&region));
+
+    try cmdbuf.endCommandBuffer();
+
+    const si = vk.SubmitInfo{
+        .command_buffer_count = 1,
+        .p_command_buffers = (&cmdbuf.handle)[0..1],
+        .p_wait_dst_stage_mask = undefined,
+    };
+    try device.queueSubmit(ctx.graphics_queue.handle, 1, @ptrCast(&si), .null_handle);
+    try device.queueWaitIdle(ctx.graphics_queue.handle);
+}
+
+pub fn copyImageToBuffer(
+    ctx: *Engine.VulkanContext,
+    device: *Device,
+    pool: vk.CommandPool,
+    src: vk.Image,
+    src_layout: vk.ImageLayout,
+    dst: vk.Buffer,
+    extent: vk.Extent3D,
+) !void {
+    var cmdbuf_handle: vk.CommandBuffer = undefined;
+    try device.allocateCommandBuffers(&.{
+        .command_pool = pool,
+        .level = .primary,
+        .command_buffer_count = 1,
+    }, @ptrCast(&cmdbuf_handle));
+    defer device.freeCommandBuffers(pool, 1, @ptrCast(&cmdbuf_handle));
+
+    const cmdbuf = Engine.VulkanContext.Api.CommandBuffer.init(cmdbuf_handle, device.wrapper);
+
+    try cmdbuf.beginCommandBuffer(&.{
+        .flags = .{ .one_time_submit_bit = true },
+    });
+
+    const region = vk.BufferImageCopy{
+        .buffer_offset = 0,
+        .buffer_row_length = extent.width,
+        .buffer_image_height = extent.height,
+        .image_subresource = .{
+            .aspect_mask = .{ .color_bit = true },
+            .mip_level = 0,
+            .base_array_layer = 0,
+            .layer_count = 1,
+        },
+        .image_offset = .{ .x = 0, .y = 0, .z = 0 },
+        .image_extent = extent,
+    };
+    cmdbuf.copyImageToBuffer(src, src_layout, dst, 1, @ptrCast(&region));
 
     try cmdbuf.endCommandBuffer();
 

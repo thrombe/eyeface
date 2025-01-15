@@ -572,7 +572,7 @@ pub const GuiState = struct {
         reset = reset or c.ImGui_Button("Reset render state");
 
         _ = c.ImGui_SliderFloat("exposure", &state.exposure, 0.0, 2.0);
-        _ = c.ImGui_SliderFloat("gamma", &state.gamma, 0.0, 10.0);
+        _ = c.ImGui_SliderFloat("gamma", &state.gamma, 0.0, 4.0);
 
         reset = reset or c.ImGui_ColorEdit3("Background Color 1", @ptrCast(&state.background_color1), c.ImGuiColorEditFlags_Float);
         reset = reset or c.ImGui_ColorEdit3("Background Color 2", @ptrCast(&state.background_color2), c.ImGuiColorEditFlags_Float);

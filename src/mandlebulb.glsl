@@ -9,15 +9,15 @@ struct Uniforms {
     uint frame;
     float time;
     float deltatime;
-    uint width;
-    uint height;
-    uint monitor_width;
-    uint monitor_height;
+    int width;
+    int height;
+    int monitor_width;
+    int monitor_height;
 
     float exposure;
     float gamma;
 
-    uint voxel_grid_side;
+    int voxel_grid_side;
     uint voxel_debug_view;
     uint pad1;
 
@@ -63,26 +63,29 @@ void set_seed(int id) {
 }
 
 vec4 voxel_fetch(ivec3 v) {
-    return voxels[to1D(v, int(ubo.voxel_grid_side))];
+    int side = ubo.voxel_grid_side;
+    return voxels[clamp(to1D(v, side), 0, side * side * side - 1)];
 }
 
 vec4 voxel_fetch(vec3 p) {
-    return voxel_fetch(clamp(ivec3((p + 0.5) * vec3(ubo.voxel_grid_side) + 0.0001), ivec3(0), ivec3(ubo.voxel_grid_side)));
+    int side = ubo.voxel_grid_side;
+    return voxel_fetch(clamp(ivec3((p + 0.5) * vec3(side) + 0.0001), ivec3(0), ivec3(side - 1)));
 }
 
 vec4 trilinear_voxel_fetch(vec3 p) {
-    p = (p + 0.5) * vec3(ubo.voxel_grid_side);
+    int side = ubo.voxel_grid_side;
+    p = (p + 0.5) * vec3(side);
 
     ivec3 v = ivec3(p + 0.0001);
     
-    vec4 xmymzm = voxel_fetch(clamp(v + ivec3(0, 0, 0), ivec3(0), ivec3(ubo.voxel_grid_side)));
-    vec4 xpymzm = voxel_fetch(clamp(v + ivec3(1, 0, 0), ivec3(0), ivec3(ubo.voxel_grid_side)));
-    vec4 xmypzm = voxel_fetch(clamp(v + ivec3(0, 1, 0), ivec3(0), ivec3(ubo.voxel_grid_side)));
-    vec4 xpypzm = voxel_fetch(clamp(v + ivec3(1, 1, 0), ivec3(0), ivec3(ubo.voxel_grid_side)));
-    vec4 xmymzp = voxel_fetch(clamp(v + ivec3(0, 0, 1), ivec3(0), ivec3(ubo.voxel_grid_side)));
-    vec4 xpymzp = voxel_fetch(clamp(v + ivec3(1, 0, 1), ivec3(0), ivec3(ubo.voxel_grid_side)));
-    vec4 xmypzp = voxel_fetch(clamp(v + ivec3(0, 1, 1), ivec3(0), ivec3(ubo.voxel_grid_side)));
-    vec4 xpypzp = voxel_fetch(clamp(v + ivec3(1, 1, 1), ivec3(0), ivec3(ubo.voxel_grid_side)));
+    vec4 xmymzm = voxel_fetch(clamp(v + ivec3(0, 0, 0), ivec3(0), ivec3(side - 1)));
+    vec4 xpymzm = voxel_fetch(clamp(v + ivec3(1, 0, 0), ivec3(0), ivec3(side - 1)));
+    vec4 xmypzm = voxel_fetch(clamp(v + ivec3(0, 1, 0), ivec3(0), ivec3(side - 1)));
+    vec4 xpypzm = voxel_fetch(clamp(v + ivec3(1, 1, 0), ivec3(0), ivec3(side - 1)));
+    vec4 xmymzp = voxel_fetch(clamp(v + ivec3(0, 0, 1), ivec3(0), ivec3(side - 1)));
+    vec4 xpymzp = voxel_fetch(clamp(v + ivec3(1, 0, 1), ivec3(0), ivec3(side - 1)));
+    vec4 xmypzp = voxel_fetch(clamp(v + ivec3(0, 1, 1), ivec3(0), ivec3(side - 1)));
+    vec4 xpypzp = voxel_fetch(clamp(v + ivec3(1, 1, 1), ivec3(0), ivec3(side - 1)));
     
     vec4 ymzm = mix(xmymzm, xpymzm, fract(p.x));
     vec4 ypzm = mix(xmypzm, xpypzm, fract(p.x));
@@ -109,8 +112,8 @@ struct BulbResult {
 };
 
 BulbResult bulb(vec3 pos) {
-    pos /= ubo.fractal_scale;
-    vec3 w = pos;
+    vec3 w0 = pos / ubo.fractal_scale;
+    vec3 w = w0;
     float dr = 1.0;
     float r2 = dot(w, w);
     vec3 trap = vec3(1.0);
@@ -144,9 +147,9 @@ BulbResult bulb(vec3 pos) {
         // convert back to cartesian coordinates
         // MOUS: apparently it's much faster when you don't call sin() twice :/
         float k1 = sin(wo);
-        w.x = pos.x + wr * k1 * sin(wi);
-        w.y = pos.y + wr * cos(wo);
-        w.z = pos.z + wr * k1 * cos(wi);
+        w.x = w0.x + wr * k1 * sin(wi);
+        w.y = w0.y + wr * cos(wo);
+        w.z = w0.z + wr * k1 * cos(wi);
 
         dr = dr * pow(r2, p/2.0) * p + 1.0;
         r2 = dot(w, w);
@@ -171,8 +174,8 @@ float march(vec3 ro, vec3 rd) {
     // allows this many units of penetration 'into' the fractal
     float penetration_depth = random() / max(ubo.fractal_density * ubo.ray_penetration_factor, 1.0);
 
-    for (int i = 0; i<ubo.march_iterations && t<ubo.t_max && penetration_depth > 0.0; i++) {
-        vec3 pos = ro + t*rd;
+    for (int i = 0; i < ubo.march_iterations && t < ubo.t_max && penetration_depth > 0.0; i++) {
+        vec3 pos = ro + t * rd;
         BulbResult v = bulb(pos);
         float dt = v.potential;
         penetration_depth -= stepSize * v.density;
@@ -191,8 +194,9 @@ vec4 gather(vec3 ro, vec3 rd) {
     vec3 col = vec3(0.0);
 
     if (ubo.voxel_debug_view != 0) {
-        vec3 cubeSize = 1.0 / vec3(ubo.voxel_grid_side);
-        for (int i = 0; i<ubo.gather_iterations && transparency > ubo.min_background_color_contribution && t<ubo.t_max; i++) {
+        int side = ubo.voxel_grid_side;
+        vec3 cubeSize = 1.0 / vec3(side);
+        for (int i = 0; i < side * 3 && transparency > ubo.min_background_color_contribution && t < ubo.t_max; i++) {
             vec3 p = ro + t * rd;
             vec3 l = (cubeSize * floor(p / cubeSize + sign(rd) * 0.50001 + 0.5) - p) / rd;
             float stepSize = min(min(l.x, l.y), l.z) + 0.00001;
@@ -216,7 +220,7 @@ vec4 gather(vec3 ro, vec3 rd) {
 
         // a random phase to offset steps by - for preventing aliasing
         float phase = pow(random(), exp(ubo.stylistic_aliasing_factor));
-        for (int i = 0; i<ubo.gather_iterations && transparency > ubo.min_background_color_contribution && t<ubo.t_max; i++) {
+        for (int i = 0; i < ubo.gather_iterations && transparency > ubo.min_background_color_contribution && t < ubo.t_max; i++) {
             vec3 p = ro + rd * t;
         
             BulbResult v = bulb(p);
@@ -225,7 +229,7 @@ vec4 gather(vec3 ro, vec3 rd) {
                 depth = min(depth, t);
 
                 float sample_transparency = exp(-stepSize * ubo.fractal_density);
-                vec3 voxel_color = max(trilinear_voxel_fetch(p).rgb, vec3(0.0));
+                vec3 voxel_color = trilinear_voxel_fetch(p).rgb;
                 vec3 sample_color = voxel_color * v.col  + v.emission;
                 col += transparency * (1.0 - sample_transparency) * sample_color;
                 transparency *= sample_transparency;
@@ -250,21 +254,19 @@ vec4 gather(vec3 ro, vec3 rd) {
         if (ubo.frame > ubo.gi_samples) {
             return;
         }
-        uint side = ubo.voxel_grid_side;
+        int side = ubo.voxel_grid_side;
         if (id >= side * side * side) {
             return;
         }
 
         if (ubo.frame == 0) {
-            if (id < side * side * side) {
-                voxels[id] = vec4(0.0);
-            }
+            voxels[id] = vec4(0.0);
         }
 
-        ivec3 ipos = to3D(id, int(ubo.voxel_grid_side));
-        vec3 pos = vec3(ipos)/float(ubo.voxel_grid_side) - 0.5;
+        ivec3 ipos = to3D(id, side);
+        vec3 pos = vec3(ipos)/float(side) - 0.5;
 
-        vec3 p = pos + vec3(random(), random(), random())/float(ubo.voxel_grid_side);
+        vec3 p = pos + vec3(random(), random(), random())/float(side);
         vec3 col = step(march(p, normalize(ubo.light_dir.xyz)), 0.0) * vec3(2.0);
 
         if (ubo.frame > 0) {
@@ -273,7 +275,7 @@ vec4 gather(vec3 ro, vec3 rd) {
             float t = march(p, rd);
             p += t * rd;
             BulbResult v = bulb(p);
-            vec3 voxel_color = max(trilinear_voxel_fetch(p).rgb, vec3(0.0));
+            vec3 voxel_color = trilinear_voxel_fetch(p).rgb;
             col += mix(background(rd), voxel_color * v.col + v.emission, step(0.0, t));
         }
 
@@ -291,17 +293,15 @@ vec4 gather(vec3 ro, vec3 rd) {
         int id = global_id;
         set_seed(id);
 
-        if (ubo.width * ubo.height <= id) {
+        if (id >= ubo.width * ubo.height) {
             return;
         }
 
         if (ubo.frame == 0) {
-            if (id < ubo.width * ubo.height) {
-                gbuffer[id] = vec4(0.0, 0.0, 0.0, 1000.0);
-            }
+            gbuffer[id] = vec4(0.0, 0.0, 0.0, 1000.0);
         }
 
-        ivec2 ipos = to2D(id, int(ubo.width));
+        ivec2 ipos = to2D(id, ubo.width);
         ivec2 ires = ivec2(ubo.width, ubo.height);
         vec2 pos = vec2(ipos);
         vec2 res = vec2(ires);
@@ -333,7 +333,7 @@ vec4 gather(vec3 ro, vec3 rd) {
         if (ubo.width * ubo.height <= id) {
             return;
         }
-        ivec2 ipos = to2D(id, int(ubo.width));
+        ivec2 ipos = to2D(id, ubo.width);
 
         vec3 f_color = gbuffer[id].xyz;
 

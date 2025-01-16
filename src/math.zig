@@ -521,7 +521,8 @@ pub const Camera = struct {
     pitch: f32 = 0,
     yaw: f32 = 0,
     speed: f32 = 1.0,
-    sensitivity: f32 = 0.2,
+    sensitivity: f32 = 1.0,
+    sensitivity_scale: f32 = 0.003,
     basis: struct {
         fwd: Vec4,
         right: Vec4,
@@ -562,8 +563,9 @@ pub const Camera = struct {
         dp: struct { dx: i32, dy: i32 },
         pressed: struct { w: bool, a: bool, s: bool, d: bool, shift: bool, ctrl: bool },
     ) void {
-        self.yaw += @as(f32, @floatFromInt(dp.dx)) * self.sensitivity * delta;
-        self.pitch -= @as(f32, @floatFromInt(dp.dy)) * self.sensitivity * delta;
+        // rotation should not be multiplied by deltatime. if mouse moves by 3cm, it should always rotate the same amount.
+        self.yaw += @as(f32, @floatFromInt(dp.dx)) * self.sensitivity_scale * self.sensitivity;
+        self.pitch -= @as(f32, @floatFromInt(dp.dy)) * self.sensitivity_scale * self.sensitivity;
         self.pitch = std.math.clamp(self.pitch, constants.pitch_min, constants.pitch_max);
 
         const rot = self.rot_quat();

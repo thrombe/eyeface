@@ -62,14 +62,47 @@ void set_seed(int id) {
     seed = int(ubo.frame) ^ id ^ floatBitsToInt(ubo.time);
 }
 
+bool inGrid(ivec3 pos) {
+    if (any(lessThan(pos, ivec3(0)))) {
+        return false;
+    }
+    if (any(greaterThanEqual(pos, ivec3(ubo.voxel_grid_side)))) {
+        return false;
+    }
+
+    return true;
+}
+
+bool inGrid(vec3 pos) {
+    if (any(lessThan(pos, vec3(0)))) {
+        return false;
+    }
+    if (any(greaterThanEqual(pos, vec3(1.0)))) {
+        return false;
+    }
+
+    return true;
+}
+
 vec4 voxel_fetch(ivec3 v) {
+    if (!inGrid(v)) {
+        return vec4(0.0);
+    }
+
     int side = ubo.voxel_grid_side;
-    return voxels[clamp(to1D(v, side), 0, side * side * side - 1)];
+    return voxels[to1D(v, side)];
 }
 
 vec4 voxel_fetch(vec3 p) {
+    p += 0.5;
+
+    if (!inGrid(p)) {
+        return vec4(0.0);
+    }
+
     int side = ubo.voxel_grid_side;
-    return voxel_fetch(clamp(ivec3((p + 0.5) * vec3(side) + 0.0001), ivec3(0), ivec3(side - 1)));
+    ivec3 pos = ivec3(p * vec3(side));
+    return voxels[to1D(pos, side)];
 }
 
 vec4 trilinear_voxel_fetch(vec3 p) {
@@ -78,14 +111,18 @@ vec4 trilinear_voxel_fetch(vec3 p) {
 
     ivec3 v = ivec3(p + 0.0001);
     
-    vec4 xmymzm = voxel_fetch(clamp(v + ivec3(0, 0, 0), ivec3(0), ivec3(side - 1)));
-    vec4 xpymzm = voxel_fetch(clamp(v + ivec3(1, 0, 0), ivec3(0), ivec3(side - 1)));
-    vec4 xmypzm = voxel_fetch(clamp(v + ivec3(0, 1, 0), ivec3(0), ivec3(side - 1)));
-    vec4 xpypzm = voxel_fetch(clamp(v + ivec3(1, 1, 0), ivec3(0), ivec3(side - 1)));
-    vec4 xmymzp = voxel_fetch(clamp(v + ivec3(0, 0, 1), ivec3(0), ivec3(side - 1)));
-    vec4 xpymzp = voxel_fetch(clamp(v + ivec3(1, 0, 1), ivec3(0), ivec3(side - 1)));
-    vec4 xmypzp = voxel_fetch(clamp(v + ivec3(0, 1, 1), ivec3(0), ivec3(side - 1)));
-    vec4 xpypzp = voxel_fetch(clamp(v + ivec3(1, 1, 1), ivec3(0), ivec3(side - 1)));
+    if (!inGrid(v)) {
+        return vec4(0.0);
+    }
+
+    vec4 xmymzm = voxel_fetch(v + ivec3(0, 0, 0));
+    vec4 xpymzm = voxel_fetch(v + ivec3(1, 0, 0));
+    vec4 xmypzm = voxel_fetch(v + ivec3(0, 1, 0));
+    vec4 xpypzm = voxel_fetch(v + ivec3(1, 1, 0));
+    vec4 xmymzp = voxel_fetch(v + ivec3(0, 0, 1));
+    vec4 xpymzp = voxel_fetch(v + ivec3(1, 0, 1));
+    vec4 xmypzp = voxel_fetch(v + ivec3(0, 1, 1));
+    vec4 xpypzp = voxel_fetch(v + ivec3(1, 1, 1));
     
     vec4 ymzm = mix(xmymzm, xpymzm, fract(p.x));
     vec4 ypzm = mix(xmypzm, xpypzm, fract(p.x));

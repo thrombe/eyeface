@@ -273,7 +273,7 @@ vec4 gather(vec3 ro, vec3 rd) {
             // infinite bounce GI
             vec3 rd = random_normal();
             float t = march(p, rd);
-            p += t * rd;
+            vec3 p = p + t * rd;
             BulbResult v = bulb(p);
             vec3 voxel_color = trilinear_voxel_fetch(p).rgb;
             col += mix(background(rd), voxel_color * v.col + v.emission, step(0.0, t));

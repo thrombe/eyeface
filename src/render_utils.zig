@@ -2101,4 +2101,70 @@ pub const ShaderUtils = struct {
 
         return uniform_object;
     }
+
+    pub fn dump_glsl_uniform(ubo: anytype, path: []const u8) !void {
+        const Dumper = struct {
+            const Writer = std.ArrayList(u8).Writer;
+
+            fn glsl_type(t: type) []const u8 {
+                return switch (t) {
+                    Vec4 => "vec4",
+                    i32 => "int",
+                    u32 => "uint",
+                    f32 => "float",
+                    Mouse => "Mouse",
+                    Camera => "Camera",
+                    Camera.CameraMeta => "CameraMeta",
+                    Frame => "Frame",
+                    @TypeOf(ubo) => "Uniforms",
+                    else => @compileError("cannot handle this type"),
+                };
+            }
+
+            fn dump_type(w: Writer, t: type) !void {
+                switch (t) {
+                    Vec4, i32, u32, f32 => return,
+                    else => {
+                        const fields = @typeInfo(t).Struct.fields;
+                        inline for (fields) |field| {
+                            try dump_type(w, field.type);
+                        }
+
+                        try w.print(
+                            \\ struct {s} {{
+                            \\
+                        , .{glsl_type(t)});
+
+                        inline for (fields) |field| {
+                            try w.print(
+                                \\     {s} {s};
+                                \\
+                            , .{ glsl_type(field.type), field.name });
+                        }
+
+                        try w.print(
+                            \\ }};
+                            \\
+                            \\
+                        , .{});
+                    },
+                }
+            }
+        };
+
+        var data = std.ArrayList(u8).init(allocator);
+        defer data.deinit();
+
+        try data.appendSlice(
+            \\ // This file is generated from code. DO NOT EDIT.
+            \\
+            \\
+        );
+        try Dumper.dump_type(data.writer(), @TypeOf(ubo));
+
+        const file = try std.fs.cwd().createFile(path, .{});
+        defer file.close();
+
+        try file.writeAll(data.items);
+    }
 };

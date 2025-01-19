@@ -48,7 +48,7 @@ int to1D(ivec2 pos, int size) {
 }
 
 ivec2 to2D(int id, int side) {
-    ivec2 pos = ivec2(id % side, (id / side)%side);
+    ivec2 pos = ivec2(id % side, id / side);
     return pos;
 }
 

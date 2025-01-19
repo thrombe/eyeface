@@ -1832,7 +1832,6 @@ pub fn ShaderCompiler(meta: type, stages: type) type {
             define: []const []const u8,
 
             fn compile(self: *const @This(), ctx: *Compiler.Ctx) ![]u32 {
-                const comp = utils.Glslc.Compiler{ .opt = .fast, .env = .vulkan1_3 };
                 const shader: utils.Glslc.Compiler.Code = .{ .path = .{
                     .main = self.path,
                     .include = self.include,
@@ -1840,7 +1839,7 @@ pub fn ShaderCompiler(meta: type, stages: type) type {
                 } };
                 if (ctx.dump_assembly) blk: {
                     // TODO: print this on screen instead of console
-                    const res = comp.dump_assembly(allocator, &shader, self.stage) catch {
+                    const res = ctx.comp.dump_assembly(allocator, &shader, self.stage) catch {
                         break :blk;
                     };
                     switch (res) {
@@ -1854,7 +1853,7 @@ pub fn ShaderCompiler(meta: type, stages: type) type {
                     }
                 }
                 const frag_bytes = blk: {
-                    const res = try comp.compile(
+                    const res = try ctx.comp.compile(
                         allocator,
                         &shader,
                         .spirv,
@@ -1887,6 +1886,7 @@ pub fn ShaderCompiler(meta: type, stages: type) type {
         pub const Compiler = struct {
             const EventChan = utils.Channel(Compiled);
             const Ctx = struct {
+                comp: utils.Glslc.Compiler,
                 err_chan: utils.Channel(?[]const u8),
                 compiled: utils.Channel(Compiled),
                 shader_fuse: utils.FsFuse,
@@ -1956,7 +1956,7 @@ pub fn ShaderCompiler(meta: type, stages: type) type {
             ctx: *Ctx,
             thread: std.Thread,
 
-            pub fn init(shader_info: []const ShaderInfo) !@This() {
+            pub fn init(comp: utils.Glslc.Compiler, shader_info: []const ShaderInfo) !@This() {
                 const shader_fuse = try utils.FsFuse.init("./src");
                 errdefer shader_fuse.deinit();
 
@@ -1984,6 +1984,7 @@ pub fn ShaderCompiler(meta: type, stages: type) type {
                 const ctxt = try allocator.create(Ctx);
                 errdefer allocator.destroy(ctxt);
                 ctxt.* = .{
+                    .comp = comp,
                     .shaders = shaders,
                     .shader_fuse = shader_fuse,
                     .err_chan = try utils.Channel(?[]const u8).init(allocator),

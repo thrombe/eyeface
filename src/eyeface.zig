@@ -337,7 +337,7 @@ const ShaderStageManager = struct {
     }, ShaderStage);
 
     pub fn init() !@This() {
-        var comp = try CompilerUtils.Compiler.init(&[_]CompilerUtils.ShaderInfo{
+        var comp = try CompilerUtils.Compiler.init(.{ .opt = .fast, .env = .vulkan1_3 }, &[_]CompilerUtils.ShaderInfo{
             .{
                 .typ = .clear_bufs,
                 .stage = .compute,

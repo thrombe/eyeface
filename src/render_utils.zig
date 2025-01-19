@@ -2,6 +2,9 @@ const std = @import("std");
 
 const vk = @import("vulkan");
 
+const math = @import("math.zig");
+const Vec4 = math.Vec4;
+
 const Engine = @import("engine.zig");
 
 const utils = @import("utils.zig");
@@ -673,85 +676,87 @@ pub const Image = struct {
     }
 };
 
-pub fn UniformBuffer(T: type) type {
-    return struct {
-        uniforms: T,
-        buffer: vk.Buffer,
-        memory: vk.DeviceMemory,
-        dbi: vk.DescriptorBufferInfo,
+pub const UniformBuffer = struct {
+    // not owned
+    uniform_buffer: []u8,
+    buffer: vk.Buffer,
+    memory: vk.DeviceMemory,
+    dbi: vk.DescriptorBufferInfo,
 
-        pub fn new(uniforms: T, ctx: *Engine.VulkanContext) !@This() {
-            const device = &ctx.device;
+    pub fn new(uniforms: []u8, ctx: *Engine.VulkanContext) !@This() {
+        const device = &ctx.device;
 
-            const buffer = try device.createBuffer(&.{
-                .size = @sizeOf(T),
-                .usage = .{
-                    .uniform_buffer_bit = true,
-                },
-                .sharing_mode = .exclusive,
-            }, null);
-            errdefer device.destroyBuffer(buffer, null);
-            const mem_req = device.getBufferMemoryRequirements(buffer);
-            const memory = try ctx.allocate(mem_req, .{
-                .host_visible_bit = true,
-                .host_coherent_bit = true,
-            });
-            errdefer device.freeMemory(memory, null);
-            try device.bindBufferMemory(buffer, memory, 0);
+        const buffer = try device.createBuffer(&.{
+            .size = uniforms.len,
+            .usage = .{
+                .uniform_buffer_bit = true,
+            },
+            .sharing_mode = .exclusive,
+        }, null);
+        errdefer device.destroyBuffer(buffer, null);
+        const mem_req = device.getBufferMemoryRequirements(buffer);
+        const memory = try ctx.allocate(mem_req, .{
+            .host_visible_bit = true,
+            .host_coherent_bit = true,
+        });
+        errdefer device.freeMemory(memory, null);
+        try device.bindBufferMemory(buffer, memory, 0);
 
-            return .{
-                .uniforms = uniforms,
+        return .{
+            .uniform_buffer = uniforms,
+            .buffer = buffer,
+            .memory = memory,
+            .dbi = .{
                 .buffer = buffer,
-                .memory = memory,
-                .dbi = .{
-                    .buffer = buffer,
-                    .offset = 0,
-                    .range = vk.WHOLE_SIZE,
-                },
-            };
-        }
+                .offset = 0,
+                .range = vk.WHOLE_SIZE,
+            },
+        };
+    }
 
-        pub fn deinit(self: *@This(), device: *Device) void {
-            device.destroyBuffer(self.buffer, null);
-            device.freeMemory(self.memory, null);
-        }
+    pub fn deinit(self: *@This(), device: *Device) void {
+        device.destroyBuffer(self.buffer, null);
+        device.freeMemory(self.memory, null);
 
-        pub fn upload(self: *@This(), device: *Device) !void {
-            const maybe_mapped = try device.mapMemory(self.memory, 0, @sizeOf(T), .{});
-            const mapped = maybe_mapped orelse return error.MappingMemoryFailed;
-            defer device.unmapMemory(self.memory);
+        // not owned
+        // allocator.free(self.uniform_buffer);
+    }
 
-            @memcpy(@as([*]u8, @ptrCast(mapped)), std.mem.asBytes(&self.uniforms));
-        }
+    pub fn upload(self: *@This(), device: *Device) !void {
+        const maybe_mapped = try device.mapMemory(self.memory, 0, self.uniform_buffer.len, .{});
+        const mapped = maybe_mapped orelse return error.MappingMemoryFailed;
+        defer device.unmapMemory(self.memory);
 
-        pub fn layout_binding(_: *@This(), index: u32) vk.DescriptorSetLayoutBinding {
-            return .{
-                .binding = index,
-                .descriptor_type = .uniform_buffer,
-                .descriptor_count = 1,
-                .stage_flags = .{
-                    .vertex_bit = true,
-                    .fragment_bit = true,
-                    .compute_bit = true,
-                },
-            };
-        }
+        @memcpy(@as([*]u8, @ptrCast(mapped)), self.uniform_buffer);
+    }
 
-        pub fn write_desc_set(self: *@This(), binding: u32, desc_set: vk.DescriptorSet) vk.WriteDescriptorSet {
-            return .{
-                .dst_set = desc_set,
-                .dst_binding = binding,
-                .dst_array_element = 0,
-                .descriptor_count = 1,
-                .descriptor_type = .uniform_buffer,
-                .p_buffer_info = @ptrCast(&self.dbi),
-                // OOF: ??
-                .p_image_info = undefined,
-                .p_texel_buffer_view = undefined,
-            };
-        }
-    };
-}
+    pub fn layout_binding(_: *@This(), index: u32) vk.DescriptorSetLayoutBinding {
+        return .{
+            .binding = index,
+            .descriptor_type = .uniform_buffer,
+            .descriptor_count = 1,
+            .stage_flags = .{
+                .vertex_bit = true,
+                .fragment_bit = true,
+                .compute_bit = true,
+            },
+        };
+    }
+
+    pub fn write_desc_set(self: *@This(), binding: u32, desc_set: vk.DescriptorSet) vk.WriteDescriptorSet {
+        return .{
+            .dst_set = desc_set,
+            .dst_binding = binding,
+            .dst_array_element = 0,
+            .descriptor_count = 1,
+            .descriptor_type = .uniform_buffer,
+            .p_buffer_info = @ptrCast(&self.dbi),
+            // OOF: ??
+            .p_image_info = undefined,
+            .p_texel_buffer_view = undefined,
+        };
+    }
+};
 
 pub const Buffer = struct {
     buffer: vk.Buffer,
@@ -2041,3 +2046,59 @@ pub fn ShaderCompiler(meta: type, stages: type) type {
         };
     };
 }
+
+pub const ShaderUtils = struct {
+    pub const Mouse = extern struct { x: i32, y: i32, left: u32, right: u32 };
+    pub const Camera = extern struct {
+        eye: Vec4,
+        fwd: Vec4,
+        right: Vec4,
+        up: Vec4,
+        meta: CameraMeta,
+
+        pub const CameraMeta = extern struct {
+            did_change: u32 = 0,
+            did_move: u32 = 0,
+            did_rotate: u32 = 0,
+            pad: u32 = 0,
+        };
+    };
+    pub const Frame = extern struct {
+        frame: u32,
+        time: f32,
+        deltatime: f32,
+        width: u32,
+        height: u32,
+        monitor_width: u32,
+        monitor_height: u32,
+    };
+
+    pub fn create_extern_type(comptime uniform: type) type {
+        const Type = std.builtin.Type;
+        const Ut: Type = @typeInfo(uniform);
+        const U = Ut.Struct;
+
+        return @Type(.{
+            .Struct = .{
+                .layout = .@"extern",
+                .fields = U.fields,
+                .decls = &[_]Type.Declaration{},
+                .is_tuple = false,
+            },
+        });
+    }
+
+    pub fn create_uniform_object(comptime uniform_type: type, uniform: anytype) create_extern_type(uniform_type) {
+        const Type = std.builtin.Type;
+        const Ut: Type = @typeInfo(uniform_type);
+        const U = Ut.Struct;
+
+        var uniform_object: create_extern_type(uniform_type) = undefined;
+
+        inline for (U.fields) |field| {
+            @field(uniform_object, field.name) = @field(uniform, field.name);
+        }
+
+        return uniform_object;
+    }
+};

@@ -38,6 +38,8 @@ pub fn main() !void {
         defer gui_engine.deinit();
 
         var app_state = try AppState.init(engine.window);
+        defer app_state.deinit();
+
         var gui_state = GuiState{};
 
         var app = try App.init(&engine, &app_state);
@@ -70,7 +72,7 @@ pub fn main() !void {
             gui_state.tick(&app_state, lap);
             try gui_renderer.render_end(&engine.graphics.device, &renderer_state.swapchain);
 
-            app.uniforms.uniforms = app_state.uniforms(engine.window);
+            app.uniforms.uniform_buffer = try app_state.uniforms(engine.window);
 
             // multiple framebuffers => multiple descriptor sets => different buffers
             // big buffers that depends on the last frame's big buffer + multiple framebuffers => me sad

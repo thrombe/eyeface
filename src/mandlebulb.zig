@@ -4,6 +4,7 @@ const vk = @import("vulkan");
 
 const utils = @import("utils.zig");
 const Fuse = utils.Fuse;
+const ShaderUtils = utils.ShaderUtils;
 
 const math = @import("math.zig");
 const Vec4 = math.Vec4;
@@ -24,7 +25,6 @@ const ComputePipeline = render_utils.ComputePipeline;
 const DescriptorPool = render_utils.DescriptorPool;
 const DescriptorSet = render_utils.DescriptorSet;
 const CmdBuffer = render_utils.CmdBuffer;
-const ShaderUtils = render_utils.ShaderUtils;
 
 const main = @import("main.zig");
 const allocator = main.allocator;
@@ -256,7 +256,7 @@ const ShaderStageManager = struct {
         render,
         draw,
     };
-    const CompilerUtils = render_utils.ShaderCompiler(struct {
+    const CompilerUtils = utils.ShaderCompiler(struct {
         pub fn get_metadata(_: CompilerUtils.ShaderInfo) !@This() {
             return .{};
         }

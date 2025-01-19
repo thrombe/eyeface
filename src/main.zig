@@ -9,8 +9,6 @@ const math = @import("math.zig");
 const Vec4 = math.Vec4;
 const Mat4x4 = math.Mat4x4;
 
-const transform = @import("transform.zig");
-
 const Engine = @import("engine.zig");
 const c = Engine.c;
 

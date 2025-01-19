@@ -26,13 +26,14 @@ const ComputePipeline = render_utils.ComputePipeline;
 const DescriptorPool = render_utils.DescriptorPool;
 const DescriptorSet = render_utils.DescriptorSet;
 const CmdBuffer = render_utils.CmdBuffer;
+const ShaderUtils = render_utils.ShaderUtils;
 
 const main = @import("main.zig");
 const allocator = main.allocator;
 
 pub const App = @This();
 
-uniforms: UniformBuffer(Uniforms),
+uniforms: UniformBuffer,
 points_buffer: Buffer,
 voxel_buffer: Buffer,
 occlusion_buffer: Buffer,
@@ -48,41 +49,6 @@ stages: ShaderStageManager,
 
 const Device = Engine.VulkanContext.Api.Device;
 
-pub const Uniforms = extern struct {
-    transforms: TransformSet,
-    world_to_screen: Mat4x4,
-    eye: Vec4,
-    mouse: extern struct { x: i32, y: i32, left: u32, right: u32 },
-    occlusion_color: Vec4,
-    sparse_color: Vec4,
-    background_color: Vec4,
-    voxel_grid_center: Vec4,
-    voxel_grid_side: u32,
-    voxel_grid_compensation_perc: f32,
-    occlusion_multiplier: f32,
-    occlusion_attenuation: f32,
-    depth_range: f32,
-    depth_offset: f32,
-    depth_attenuation: f32,
-    points: u32,
-    iterations: u32,
-    voxelization_points: u32,
-    voxelization_iterations: u32,
-    reduction_points: u32,
-    frame: u32,
-    time: f32,
-    deltatime: f32,
-    lambda: f32,
-    visual_scale: f32,
-    visual_transform_lambda: f32,
-    width: u32,
-    height: u32,
-    monitor_width: u32,
-    monitor_height: u32,
-
-    pub const TransformSet = transform.TransformSet(5);
-};
-
 pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     var ctx = &engine.graphics;
     const device = &ctx.device;
@@ -95,7 +61,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     }, null);
     errdefer device.destroyCommandPool(cmd_pool, null);
 
-    var uniforms = try UniformBuffer(Uniforms).new(app_state.uniforms(engine.window), ctx);
+    var uniforms = try UniformBuffer.new(try app_state.uniforms(engine.window), ctx);
     errdefer uniforms.deinit(device);
 
     var points_buffer = try Buffer.new_initialized(ctx, .{
@@ -230,7 +196,7 @@ pub const RendererState = struct {
                 break :blk1 s / 64 + @as(u32, @intCast(@intFromBool(s % 64 > 0)));
             };
             const voxel_grid_sze = blk1: {
-                const s = try std.math.powi(u32, app_state.voxels.side, 3);
+                const s = try std.math.powi(u32, @intCast(app_state.voxels.side), 3);
                 break :blk1 s / 64 + @as(u32, @intCast(@intFromBool(s % 64 > 0)));
             };
             var pipelines = [_]struct {
@@ -247,21 +213,21 @@ pub const RendererState = struct {
                 },
                 .{
                     .typ = .iterate,
-                    .group_x = app_state.points_x_64,
+                    .group_x = @intCast(app_state.points_x_64),
                 },
                 .{
                     .typ = .reduce_min,
                     .reduction_factor = 256,
-                    .group_x = app_state.reduction_points_x_64,
+                    .group_x = @intCast(app_state.reduction_points_x_64),
                 },
                 .{
                     .typ = .reduce_max,
                     .reduction_factor = 256,
-                    .group_x = app_state.reduction_points_x_64,
+                    .group_x = @intCast(app_state.reduction_points_x_64),
                 },
                 .{
                     .typ = .project,
-                    .group_x = app_state.points_x_64,
+                    .group_x = @intCast(app_state.points_x_64),
                 },
                 .{
                     .typ = .occlusion,
@@ -441,6 +407,8 @@ const ShaderStageManager = struct {
 };
 
 pub const AppState = struct {
+    pub const TransformSet = transform.TransformSet(5);
+
     monitor_rez: struct { width: u32, height: u32 },
     mouse: extern struct { x: i32 = 0, y: i32 = 0, left: bool = false, right: bool = false } = .{},
     camera: math.Camera,
@@ -450,9 +418,9 @@ pub const AppState = struct {
     deltatime: f32 = 0,
     fps_cap: u32 = 500,
 
-    transform_generator: Uniforms.TransformSet.Builder.Generator = .{},
-    transforms: Uniforms.TransformSet.Builder,
-    target_transforms: Uniforms.TransformSet.Builder,
+    transform_generator: TransformSet.Builder.Generator = .{},
+    transforms: TransformSet.Builder,
+    target_transforms: TransformSet.Builder,
 
     t: f32 = 0,
     lambda: f32 = 1.0,
@@ -460,13 +428,13 @@ pub const AppState = struct {
     visual_transform_lambda: f32 = 1.0,
     pause_t: bool = false,
     pause_generator: bool = false,
-    points_x_64: u32 = 50000,
+    points_x_64: i32 = 50000,
     max_points_x_64: u32 = 1000000,
-    iterations: u32 = 20,
+    iterations: i32 = 20,
     voxel_grid_compensation_perc: f32 = 0.1,
-    voxelization_points_x_64: u32 = 50000,
-    voxelization_iterations: u32 = 4,
-    reduction_points_x_64: u32 = 50000,
+    voxelization_points_x_64: i32 = 50000,
+    voxelization_iterations: i32 = 4,
+    reduction_points_x_64: i32 = 50000,
 
     background_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#271212ff"),
     occlusion_color: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#3a0e0eff"),
@@ -481,12 +449,14 @@ pub const AppState = struct {
         // world space coords of center of the the voxel grid
         center: Vec4 = .{},
         // number of voxels along 1 edge (side ** 3 is the entire volume)
-        side: u32 = 300,
+        side: i32 = 300,
         max_side: u32 = 500,
     } = .{},
 
     rng: std.Random.Xoshiro256,
     reset_render_state: Fuse = .{},
+    uniform_buffer: []u8,
+    uniform_shader_dumped: bool = false,
 
     pub fn init(window: *Engine.Window) !@This() {
         const mouse = window.poll_mouse();
@@ -494,7 +464,7 @@ pub const AppState = struct {
 
         var rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
 
-        const generator = Uniforms.TransformSet.Builder.Generator{};
+        const generator = TransformSet.Builder.Generator{};
 
         return .{
             .monitor_rez = .{ .width = sze.width, .height = sze.height },
@@ -504,7 +474,12 @@ pub const AppState = struct {
             .target_transforms = generator.generate(rng.random()),
             .transform_generator = generator,
             .rng = rng,
+            .uniform_buffer = try allocator.alloc(u8, 0),
         };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        allocator.free(self.uniform_buffer);
     }
 
     pub fn tick(self: *@This(), lap: u64, engine: *Engine, app: *App) !void {
@@ -565,23 +540,25 @@ pub const AppState = struct {
         }
     }
 
-    pub fn uniforms(self: *const @This(), window: *Engine.Window) Uniforms {
-        const transforms = self.transforms.build();
-        return .{
+    pub fn uniforms(self: *@This(), window: *Engine.Window) ![]u8 {
+        const transforms = self.transforms.build().transforms;
+
+        const uniform = .{
             .transforms = transforms,
             .world_to_screen = self.camera.world_to_screen_mat(window.extent.width, window.extent.height),
             .eye = self.camera.pos,
-            .mouse = .{
+            .mouse = ShaderUtils.Mouse{
                 .x = self.mouse.x,
                 .y = self.mouse.y,
                 .left = @intCast(@intFromBool(self.mouse.left)),
                 .right = @intCast(@intFromBool(self.mouse.right)),
             },
-            .voxel_grid_center = self.voxels.center,
-            .voxel_grid_side = self.voxels.side,
             .occlusion_color = self.occlusion_color,
             .sparse_color = self.sparse_color,
             .background_color = self.background_color,
+            .voxel_grid_center = self.voxels.center,
+            .voxel_grid_side = self.voxels.side,
+            .voxel_grid_compensation_perc = self.voxel_grid_compensation_perc,
             .occlusion_multiplier = self.occlusion_multiplier,
             .occlusion_attenuation = self.occlusion_attenuation,
             .depth_range = self.depth_range,
@@ -598,17 +575,34 @@ pub const AppState = struct {
             .lambda = self.lambda,
             .visual_scale = self.visual_scale,
             .visual_transform_lambda = self.visual_transform_lambda,
-            .voxel_grid_compensation_perc = self.voxel_grid_compensation_perc,
             .width = window.extent.width,
             .height = window.extent.height,
             .monitor_width = self.monitor_rez.width,
             .monitor_height = self.monitor_rez.height,
         };
+
+        const ubo = ShaderUtils.create_uniform_object(@TypeOf(uniform), uniform);
+        const ubo_buffer = std.mem.asBytes(&ubo);
+
+        if (self.uniform_buffer.len != ubo_buffer.len) {
+            allocator.free(self.uniform_buffer);
+            self.uniform_buffer = try allocator.alloc(u8, ubo_buffer.len);
+        }
+
+        if (!self.uniform_shader_dumped) {
+            self.uniform_shader_dumped = true;
+
+            try ShaderUtils.dump_glsl_uniform(ubo, "./src/eyeface_uniforms.glsl");
+        }
+
+        @memcpy(self.uniform_buffer, ubo_buffer);
+
+        return self.uniform_buffer;
     }
 };
 
 pub const GuiState = struct {
-    const TransformSet = Uniforms.TransformSet;
+    const TransformSet = AppState.TransformSet;
     const Constraints = TransformSet.Builder.Generator.Constraints;
     const ShearConstraints = TransformSet.Builder.Generator.ShearConstraints;
     const Vec3Constraints = TransformSet.Builder.Generator.Vec3Constraints;

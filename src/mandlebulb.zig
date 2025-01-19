@@ -24,13 +24,14 @@ const ComputePipeline = render_utils.ComputePipeline;
 const DescriptorPool = render_utils.DescriptorPool;
 const DescriptorSet = render_utils.DescriptorSet;
 const CmdBuffer = render_utils.CmdBuffer;
+const ShaderUtils = render_utils.ShaderUtils;
 
 const main = @import("main.zig");
 const allocator = main.allocator;
 
 pub const App = @This();
 
-uniforms: UniformBuffer(Uniforms),
+uniforms: UniformBuffer,
 voxels: Buffer,
 g_buffer: Buffer,
 screen_image: Image,
@@ -40,66 +41,6 @@ command_pool: vk.CommandPool,
 stages: ShaderStageManager,
 
 const Device = Engine.VulkanContext.Api.Device;
-
-pub const Uniforms = extern struct {
-    camera: Camera,
-    mouse: Mouse,
-
-    frame: u32,
-    time: f32,
-    deltatime: f32,
-    width: u32,
-    height: u32,
-    monitor_width: u32,
-    monitor_height: u32,
-
-    exposure: f32,
-    gamma: f32,
-
-    voxel_grid_side: u32,
-    voxel_debug_view: u32,
-    pad1: u32 = 0,
-
-    background_color1: Vec4,
-    background_color2: Vec4,
-    trap_color1: Vec4,
-    trap_color2: Vec4,
-    emission_color1: Vec4,
-    emission_color2: Vec4,
-
-    light_dir: Vec4,
-    fractal_iterations: u32,
-    march_iterations: u32,
-    gather_iterations: u32,
-    gather_step_factor: f32,
-    march_step_factor: f32,
-    escape_r: f32,
-    fractal_scale: f32,
-    fractal_density: f32,
-    ray_penetration_factor: f32,
-    gi_samples: u32,
-    temporal_blend_factor: f32,
-    min_background_color_contribution: f32,
-    stylistic_aliasing_factor: f32,
-    t_max: f32,
-    bulb_z_pow: f32,
-
-    pub const Mouse = extern struct { x: i32, y: i32, left: u32, right: u32 };
-    pub const Camera = extern struct {
-        eye: Vec4,
-        fwd: Vec4,
-        right: Vec4,
-        up: Vec4,
-        meta: CameraMeta,
-
-        pub const CameraMeta = extern struct {
-            did_change: u32 = 0,
-            did_move: u32 = 0,
-            did_rotate: u32 = 0,
-            pad: u32 = 0,
-        };
-    };
-};
 
 pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     var ctx = &engine.graphics;
@@ -113,7 +54,7 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     }, null);
     errdefer device.destroyCommandPool(cmd_pool, null);
 
-    var uniforms = try UniformBuffer(Uniforms).new(app_state.uniforms(engine.window), ctx);
+    var uniforms = try UniformBuffer.new(try app_state.uniforms(engine.window), ctx);
     errdefer uniforms.deinit(device);
 
     var screen = try Image.new(ctx, .{
@@ -217,7 +158,7 @@ pub const RendererState = struct {
                 break :blk1 s / 64 + @as(u32, @intCast(@intFromBool(s % 64 > 0)));
             };
             const voxel_grid_sze = blk1: {
-                const s = try std.math.powi(u32, app_state.voxels.side, 3);
+                const s = try std.math.powi(u32, @intCast(app_state.voxels.side), 3);
                 break :blk1 s / 64 + @as(u32, @intCast(@intFromBool(s % 64 > 0)));
             };
             var pipelines = [_]struct {
@@ -367,7 +308,7 @@ pub const AppState = struct {
     monitor_rez: struct { width: u32, height: u32 },
     mouse: extern struct { x: i32 = 0, y: i32 = 0, left: bool = false, right: bool = false } = .{},
     camera: math.Camera,
-    camera_meta: Uniforms.Camera.CameraMeta = .{},
+    camera_meta: ShaderUtils.Camera.CameraMeta = .{},
 
     frame: u32 = 0,
     time: f32 = 0,
@@ -378,7 +319,7 @@ pub const AppState = struct {
     gamma: f32 = 1.0,
 
     voxels: struct {
-        side: u32 = 100,
+        side: i32 = 100,
         max_side: u32 = 500,
     } = .{},
 
@@ -390,9 +331,9 @@ pub const AppState = struct {
     emission_color2: Vec4 = math.ColorParse.hex_xyzw(Vec4, "#0033ffff"),
 
     light_dir: Vec4 = .{ .x = 1.0, .y = 1.0, .z = 1.0 },
-    fractal_iterations: u32 = 10,
-    march_iterations: u32 = 512,
-    gather_iterations: u32 = 128,
+    fractal_iterations: i32 = 10,
+    march_iterations: i32 = 512,
+    gather_iterations: i32 = 128,
     gather_step_factor: f32 = 2.5,
     march_step_factor: f32 = 2.0,
     escape_r: f32 = 1.2,
@@ -409,6 +350,8 @@ pub const AppState = struct {
 
     rng: std.Random.Xoshiro256,
     reset_render_state: Fuse = .{},
+    uniform_buffer: []u8,
+    uniform_shader_dumped: bool = false,
 
     pub fn init(window: *Engine.Window) !@This() {
         const mouse = window.poll_mouse();
@@ -421,7 +364,12 @@ pub const AppState = struct {
             .camera = math.Camera.init(Vec4{ .z = 2 }, math.Camera.constants.basis.opengl),
             .mouse = .{ .x = mouse.x, .y = mouse.y, .left = mouse.left },
             .rng = rng,
+            .uniform_buffer = try allocator.alloc(u8, 0),
         };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        allocator.free(self.uniform_buffer);
     }
 
     pub fn tick(self: *@This(), lap: u64, engine: *Engine, app: *App) !void {
@@ -473,7 +421,7 @@ pub const AppState = struct {
         }
     }
 
-    pub fn uniforms(self: *const @This(), window: *Engine.Window) Uniforms {
+    pub fn uniforms(self: *@This(), window: *Engine.Window) ![]u8 {
         const rot = self.camera.rot_quat();
 
         const fwd = rot.rotate_vector(self.camera.basis.fwd);
@@ -481,36 +429,42 @@ pub const AppState = struct {
         const up = rot.rotate_vector(self.camera.basis.up);
         const eye = self.camera.pos;
 
-        return .{
-            .camera = .{
+        const uniform = .{
+            .camera = ShaderUtils.Camera{
                 .eye = eye,
                 .fwd = fwd,
                 .right = right,
                 .up = up,
                 .meta = self.camera_meta,
             },
-            .mouse = .{
+            .mouse = ShaderUtils.Mouse{
                 .x = self.mouse.x,
                 .y = self.mouse.y,
                 .left = @intCast(@intFromBool(self.mouse.left)),
                 .right = @intCast(@intFromBool(self.mouse.right)),
             },
+            .frame = self.frame,
+            .time = self.time,
+            .deltatime = self.deltatime,
+            .width = @as(i32, @intCast(window.extent.width)),
+            .height = @as(i32, @intCast(window.extent.height)),
+            .monitor_width = @as(i32, @intCast(self.monitor_rez.width)),
+            .monitor_height = @as(i32, @intCast(self.monitor_rez.height)),
+
+            .exposure = self.exposure,
+            .gamma = self.gamma,
+
+            .voxel_grid_side = self.voxels.side,
+            .voxel_debug_view = @as(i32, @intCast(@intFromBool(self.voxel_debug_view))),
+            .pad1 = std.mem.zeroes(u32),
+
             .background_color1 = self.background_color1,
             .background_color2 = self.background_color2,
             .trap_color1 = self.trap_color1,
             .trap_color2 = self.trap_color2,
             .emission_color1 = self.emission_color1,
             .emission_color2 = self.emission_color2,
-            .exposure = self.exposure,
-            .gamma = self.gamma,
-            .frame = self.frame,
-            .time = self.time,
-            .deltatime = self.deltatime,
-            .width = window.extent.width,
-            .height = window.extent.height,
-            .monitor_width = self.monitor_rez.width,
-            .monitor_height = self.monitor_rez.height,
-            .voxel_grid_side = self.voxels.side,
+
             .light_dir = self.light_dir,
             .fractal_iterations = self.fractal_iterations,
             .march_iterations = self.march_iterations,
@@ -525,10 +479,26 @@ pub const AppState = struct {
             .temporal_blend_factor = self.temporal_blend_factor,
             .min_background_color_contribution = self.min_background_color_contribution,
             .stylistic_aliasing_factor = self.stylistic_aliasing_factor,
-            .voxel_debug_view = @intCast(@intFromBool(self.voxel_debug_view)),
             .t_max = self.t_max,
             .bulb_z_pow = self.bulb_z_pow,
         };
+        const ubo = ShaderUtils.create_uniform_object(@TypeOf(uniform), uniform);
+        const ubo_buffer = std.mem.asBytes(&ubo);
+
+        if (self.uniform_buffer.len != ubo_buffer.len) {
+            allocator.free(self.uniform_buffer);
+            self.uniform_buffer = try allocator.alloc(u8, ubo_buffer.len);
+        }
+
+        if (!self.uniform_shader_dumped) {
+            self.uniform_shader_dumped = true;
+
+            try ShaderUtils.dump_glsl_uniform(ubo, "./src/mandlebulb_uniforms.glsl");
+        }
+
+        @memcpy(self.uniform_buffer, ubo_buffer);
+
+        return self.uniform_buffer;
     }
 
     pub fn reset_time(self: *@This()) void {

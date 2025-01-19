@@ -3,7 +3,6 @@ const std = @import("std");
 const vk = @import("vulkan");
 
 const math = @import("math.zig");
-const Vec4 = math.Vec4;
 
 const Engine = @import("engine.zig");
 
@@ -2048,6 +2047,9 @@ pub fn ShaderCompiler(meta: type, stages: type) type {
 }
 
 pub const ShaderUtils = struct {
+    const Vec4 = math.Vec4;
+    const Mat4x4 = math.Mat4x4;
+
     pub const Mouse = extern struct { x: i32, y: i32, left: u32, right: u32 };
     pub const Camera = extern struct {
         eye: Vec4,
@@ -2109,6 +2111,7 @@ pub const ShaderUtils = struct {
             fn glsl_type(t: type) []const u8 {
                 return switch (t) {
                     Vec4 => "vec4",
+                    Mat4x4 => "mat4",
                     i32 => "int",
                     u32 => "uint",
                     f32 => "float",
@@ -2117,36 +2120,52 @@ pub const ShaderUtils = struct {
                     Camera.CameraMeta => "CameraMeta",
                     Frame => "Frame",
                     @TypeOf(ubo) => "Uniforms",
-                    else => @compileError("cannot handle this type"),
+                    else => switch (@typeInfo(t)) {
+                        .Array => |child| glsl_type(child.child),
+                        else => @compileError("cannot handle this type"),
+                    },
                 };
+            }
+
+            fn glsl_fieldname(field: std.builtin.Type.StructField) []const u8 {
+                switch (@typeInfo(field.type)) {
+                    .Array => |child| {
+                        const len = std.fmt.comptimePrint("{d}", .{child.len});
+                        return field.name ++ "[" ++ len ++ "]";
+                    },
+                    else => return field.name,
+                }
             }
 
             fn dump_type(w: Writer, t: type) !void {
                 switch (t) {
-                    Vec4, i32, u32, f32 => return,
-                    else => {
-                        const fields = @typeInfo(t).Struct.fields;
-                        inline for (fields) |field| {
-                            try dump_type(w, field.type);
-                        }
+                    []Mat4x4, Mat4x4, Vec4, i32, u32, f32 => return,
+                    else => switch (@typeInfo(t)) {
+                        .Array => return,
+                        else => {
+                            const fields = @typeInfo(t).Struct.fields;
+                            inline for (fields) |field| {
+                                try dump_type(w, field.type);
+                            }
 
-                        try w.print(
-                            \\ struct {s} {{
-                            \\
-                        , .{glsl_type(t)});
-
-                        inline for (fields) |field| {
                             try w.print(
-                                \\     {s} {s};
+                                \\ struct {s} {{
                                 \\
-                            , .{ glsl_type(field.type), field.name });
-                        }
+                            , .{glsl_type(t)});
 
-                        try w.print(
-                            \\ }};
-                            \\
-                            \\
-                        , .{});
+                            inline for (fields) |field| {
+                                try w.print(
+                                    \\     {s} {s};
+                                    \\
+                                , .{ glsl_type(field.type), glsl_fieldname(field) });
+                            }
+
+                            try w.print(
+                                \\ }};
+                                \\
+                                \\
+                            , .{});
+                        },
                     },
                 }
             }

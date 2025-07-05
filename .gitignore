@@ -4,4 +4,6 @@
 /zig-out
 /tmp
 /images
+/imgui.ini
+/notes.md
 /screenshots/*.png

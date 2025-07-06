@@ -1,9 +1,15 @@
 #version 460
 
 #include <common.glsl>
-#include <eyeface_uniforms.glsl>
+#include <uniforms.glsl>
 
-layout(set = 0, binding = 0) uniform Ubo {
+#ifdef COMPUTE_PASS
+    #define bufffer buffer
+#else
+    #define bufffer readonly buffer
+#endif
+
+layout(set = _set_compute, binding = _bind_uniforms) uniform Ubo {
     Uniforms ubo;
 };
 
@@ -14,37 +20,45 @@ struct PixelMeta {
     float pad;
 };
 
-#ifdef EYEFACE_COMPUTE
-    layout(set = 0, binding = 1) buffer PointsBuffer {
+#ifdef COMPUTE_PASS
+    layout(set = _set_compute, binding = _bind_points) bufffer PointsBuffer {
         vec4 points[];
     };
-    layout(set = 0, binding = 2) buffer VoxelBuffer {
+    layout(set = _set_compute, binding = _bind_voxels) bufffer VoxelBuffer {
         uint voxels[];
     };
-    layout(set = 0, binding = 3) buffer OcclusionBuffer {
+    layout(set = _set_compute, binding = _bind_occlusion) bufffer OcclusionBuffer {
         float occlusion[];
     };
-    layout(set = 0, binding = 4) buffer GBuffer {
+    layout(set = _set_compute, binding = _bind_gbuffer) bufffer GBuffer {
         PixelMeta gbuffer[];
     };
-    layout(set = 0, binding = 5, rgba16) writeonly uniform image2D screen;
+    layout(set = _set_compute, binding = _bind_screen, rgba16f) writeonly uniform image2D screen;
     // keeping a separate depth buffer is faster cuz the access patterns of this are much different
-    layout(set = 0, binding = 6) buffer DepthBuffer {
+    layout(set = _set_compute, binding = _bind_screen_depth) bufffer DepthBuffer {
         float depth[];
     };
-    layout(set = 0, binding = 7) buffer VoxelMetadataBuffer {
+    layout(set = _set_compute, binding = _bind_reduction) bufffer ReductionBuffer {
         vec4 voxel_grid_min;
         vec4 voxel_grid_max;
         vec4 voxel_grid_mid;
         vec3 reduction_buf[];
     };
-#endif // EYEFACE_COMPUTE
+#endif // COMPUTE_PASS
+
+layout(push_constant) uniform PushConstants_ {
+    PushConstants push;
+};
+
+void set_seed(int id) {
+    seed = int(ubo.frame.frame) ^ id ^ floatBitsToInt(ubo.frame.time) ^ push.seed;
+}
 
 bool inGrid(ivec3 pos) {
     if (any(lessThan(pos, ivec3(0)))) {
         return false;
     }
-    if (any(greaterThan(pos, ivec3(ubo.voxel_grid_side)))) {
+    if (any(greaterThan(pos, ivec3(ubo.params.voxel_grid_side)))) {
         return false;
     }
 
@@ -55,63 +69,64 @@ float voxelGridSample(ivec3 pos) {
     if (!inGrid(pos)) {
         return 0;
     }
-
-    return float(voxels[to1D(pos, ubo.voxel_grid_side)] > 0);
+    return float(voxels[to1D(pos, ubo.params.voxel_grid_side)] > 0);
 }
 
-#ifdef EYEFACE_CLEAR_BUFS
-    layout (local_size_x = 8, local_size_y = 8) in;
+#ifdef CLEAR_BUFS_PASS
+    layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
     void main() {
         int id = global_id;
 
-        uint side = ubo.voxel_grid_side;
+        uint side = ubo.params.voxel_grid_side;
         if (id < side * side * side) {
             voxels[id] = 0;
             occlusion[id] = 0.0;
         }
-        if (id < ubo.width * ubo.height) {
+        if (id < ubo.frame.width * ubo.frame.height) {
             depth[id] = 1.1;
             gbuffer[id].grid_pos = vec3(0.0);
             gbuffer[id].pix_type = 0;
             gbuffer[id].visual_pos = vec3(0.0);
             gbuffer[id].pad = 0.0;
-            imageStore(screen, to2D(int(id), int(ubo.width)), ubo.background_color);
+            imageStore(screen, to2D(int(id), int(ubo.frame.width)), ubo.params.background_color);
         }
     }
-#endif // EYEFACE_CLEAR_BUFS
+#endif // CLEAR_BUFS_PASS
 
-#ifdef EYEFACE_ITERATE
-    layout (local_size_x = 8, local_size_y = 8) in;
+#ifdef ITERATE_PASS
+    layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
     void main() {
         int id = global_id;
         vec4 pos = points[id];
 
-        uint seed = rand_xorshift(id + ubo.frame * 11335474);
-        pos = ubo.transforms[seed % 5] * pos;
+        set_seed(id);
+        uint t_index = rand_xorshift(uint(id) + uint(ubo.frame.frame) * 11335474u + uint(push.seed)) % 5;
+        pos = ubo.transforms[t_index] * pos;
         points[id] = pos;
-        if (id < ubo.reduction_points) {
+        
+        if (id < ubo.params.reduction_points) {
             reduction_buf[id] = pos.xyz;
         }
     }
-#endif // EYEFACE_ITERATE
+#endif // ITERATE_PASS
 
-#ifdef EYEFACE_REDUCE
+#ifdef REDUCE_PASS
     shared vec4 group_buf[128];
 
-    vec4 reduce(vec4 a, vec4 b) {
-        #ifdef EYEFACE_REDUCE_MIN
+    vec4 reduce_op(vec4 a, vec4 b) {
+        #ifdef REDUCE_MIN_PASS
             return min(a, b);
         #endif
-        #ifdef EYEFACE_REDUCE_MAX
+        #ifdef REDUCE_MAX_PASS
             return max(a, b);
         #endif
     }
 
     void set_reduction_result(vec3 res) {
-        #ifdef EYEFACE_REDUCE_MIN
+        #ifdef REDUCE_MIN_PASS
             vec4 old = voxel_grid_min;
         #endif
-        #ifdef EYEFACE_REDUCE_MAX
+        #ifdef REDUCE_MAX_PASS
             vec4 old = voxel_grid_max;
         #endif
 
@@ -119,12 +134,12 @@ float voxelGridSample(ivec3 pos) {
 
         float old_size = length(old.xyz - voxel_grid_mid.xyz);
         float new_size = length(new.xyz - voxel_grid_mid.xyz);
-        vec3 compensate = vec3(new_size) * ubo.voxel_grid_compensation_perc;
+        vec3 compensate = vec3(new_size) * ubo.params.voxel_grid_compensation_perc;
 
-        #ifdef EYEFACE_REDUCE_MIN
+        #ifdef REDUCE_MIN_PASS
             new -= vec4(compensate, 0.0);
         #endif
-        #ifdef EYEFACE_REDUCE_MAX
+        #ifdef REDUCE_MAX_PASS
             new += vec4(compensate, 0.0);
         #endif
 
@@ -137,18 +152,18 @@ float voxelGridSample(ivec3 pos) {
         // e = 1.0 - exp(-20.0 * ubo.deltatime);
         // new = mix(old, new, e);
 
-        #ifdef EYEFACE_REDUCE_MIN
+        #ifdef REDUCE_MIN_PASS
             voxel_grid_min = new;
         #endif
-        #ifdef EYEFACE_REDUCE_MAX
+        #ifdef REDUCE_MAX_PASS
             voxel_grid_max = new;
 
             vec3 mid = (new.xyz + voxel_grid_min.xyz)/2.0;
             float size = length(new.xyz - voxel_grid_min.xyz)/2.0;
-            float e = 1.0 - exp(-ubo.visual_transform_lambda * ubo.deltatime);
+            float e = 1.0 - exp(-ubo.params.visual_transform_lambda * ubo.frame.deltatime);
             voxel_grid_mid.xyz = mix(voxel_grid_mid.xyz, mid, e);
 
-            size /= ubo.visual_scale;
+            size /= ubo.params.visual_scale;
             voxel_grid_mid.w = mix(voxel_grid_mid.w, size, e);
 
             if (voxel_grid_mid.w < 0.001) {
@@ -157,30 +172,30 @@ float voxelGridSample(ivec3 pos) {
         #endif
     }
 
-    layout (local_size_x = 8, local_size_y = 8) in;
+    layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
     void main() {
         uint id = gl_LocalInvocationID.x + gl_LocalInvocationID.y * 8;
         uint offset = gl_WorkGroupID.x * 64;
         uint gid = id + offset;
 
-        uint index1 = min(0 + gid * 4, ubo.reduction_points - 1);
-        uint index2 = min(1 + gid * 4, ubo.reduction_points - 1);
-        uint index3 = min(2 + gid * 4, ubo.reduction_points - 1);
-        uint index4 = min(3 + gid * 4, ubo.reduction_points - 1);
+        uint index1 = min(0 + gid * 4, ubo.params.reduction_points - 1);
+        uint index2 = min(1 + gid * 4, ubo.params.reduction_points - 1);
+        uint index3 = min(2 + gid * 4, ubo.params.reduction_points - 1);
+        uint index4 = min(3 + gid * 4, ubo.params.reduction_points - 1);
         vec4 a = vec4(reduction_buf[index1].xyz, 0.0);
         vec4 b = vec4(reduction_buf[index2].xyz, 0.0);
         vec4 c = vec4(reduction_buf[index3].xyz, 0.0);
         vec4 d = vec4(reduction_buf[index4].xyz, 0.0);
-        group_buf[id] = reduce(a, b);
-        group_buf[id + 64] = reduce(c, d);
+        group_buf[id] = reduce_op(a, b);
+        group_buf[id + 64] = reduce_op(c, d);
 
         barrier();
 
         for (int i=64; i>0; i>>=1) {
             if (id < i) {
-                vec4 a = group_buf[id];
-                vec4 b = group_buf[id + i];
-                group_buf[id] = reduce(a, b);
+                vec4 val1 = group_buf[id];
+                vec4 val2 = group_buf[id + i];
+                group_buf[id] = reduce_op(val1, val2);
             }
             barrier();
         }
@@ -192,24 +207,24 @@ float voxelGridSample(ivec3 pos) {
             }
         }
     }
-#endif // EYEFACE_REDUCE
+#endif // REDUCE_PASS
 
-#ifdef EYEFACE_PROJECT
-    layout (local_size_x = 8, local_size_y = 8) in;
+#ifdef PROJECT_PASS
+    layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
     void main() {
         int id = global_id;
         vec4 pos = points[id];
 
-        uint seed = rand_xorshift(id + ubo.frame * 13324848);
-        for (int i=0; i<ubo.iterations; i++) {
+        set_seed(id);
+        uint seed = rand_xorshift(uint(id) + uint(ubo.frame.frame) * 13324848u + uint(push.seed));
+        for (int i=0; i<ubo.params.iterations; i++) {
             seed = rand_xorshift(seed);
             pos = ubo.transforms[seed % 5] * pos;
 
-            if (i < ubo.voxelization_iterations && id < ubo.voxelization_points) {
-                int side = ubo.voxel_grid_side;
-                // TODO: this should be a matrix
+            if (i < ubo.params.voxelization_iterations && id < ubo.params.voxelization_points) {
+                int side = ubo.params.voxel_grid_side;
                 vec3 grid_pos = pos.xyz;
-                grid_pos.xyz -= ubo.voxel_grid_center.xyz + (voxel_grid_min.xyz + voxel_grid_max.xyz)/2.0;
+                grid_pos.xyz -= ubo.params.voxel_grid_center.xyz + (voxel_grid_min.xyz + voxel_grid_max.xyz)/2.0;
                 grid_pos /= voxel_grid_max.xyz - voxel_grid_min.xyz;
                 grid_pos *= float(side);
                 grid_pos += float(side)/2.0;
@@ -222,7 +237,8 @@ float voxelGridSample(ivec3 pos) {
             screen_pos.xyz -= voxel_grid_mid.xyz;
             screen_pos.xyz /= voxel_grid_mid.w;
             vec4 visual_pos = screen_pos;
-            screen_pos = ubo.world_to_screen * screen_pos;
+
+            screen_pos = ubo.params.world_to_screen * screen_pos;
 
             // behind the camera
             if (screen_pos.z < 0.0) {
@@ -236,26 +252,25 @@ float voxelGridSample(ivec3 pos) {
             }
 
             // depth testing
-            screen_pos.xy /= 2.0;
-            screen_pos.xy += 0.5;
-            int si = to1D(ivec2(screen_pos.xy * vec2(float(ubo.width), float(ubo.height))), int(ubo.width));
+            screen_pos.xy = screen_pos.xy * 0.5 + 0.5;
+            ivec2 screen_icoord = ivec2(screen_pos.xy * vec2(float(ubo.frame.width), float(ubo.frame.height)));
+            int si = to1D(screen_icoord, int(ubo.frame.width));
 
             // NOTE: there's many race conditions here, but since (screen resolution) >> (number of hits at the same
             //    position and at the same time) we can get away with ignoring the race conditions
-            // float d = atomicMin(depth[si], screen_pos.z);
-            float d = depth[si];
-            if (d < screen_pos.z) {
+            if (depth[si] < screen_pos.z) {
                 continue;
             }
             depth[si] = screen_pos.z;
 
-            int side = ubo.voxel_grid_side;
+            int side = ubo.params.voxel_grid_side;
             vec3 grid_pos = pos.xyz;
-            grid_pos.xyz -= ubo.voxel_grid_center.xyz + (voxel_grid_min.xyz + voxel_grid_max.xyz)/2.0;
+            grid_pos.xyz -= ubo.params.voxel_grid_center.xyz + (voxel_grid_min.xyz + voxel_grid_max.xyz)/2.0;
             grid_pos /= voxel_grid_max.xyz - voxel_grid_min.xyz;
             grid_pos *= float(side);
             grid_pos += float(side)/2.0;
             // TODO: maybe just store global pos and derive the rest
+
             gbuffer[si].grid_pos = grid_pos;
             gbuffer[si].visual_pos = visual_pos.xyz;
             if (inGrid(ivec3(grid_pos))) {
@@ -264,16 +279,14 @@ float voxelGridSample(ivec3 pos) {
                 gbuffer[si].pix_type = 1;
             }
         }
-
-        // points[id] = pos;
     }
-#endif // EYEFACE_PROJECT
+#endif // PROJECT_PASS
 
-#ifdef EYEFACE_OCCLUSION
-    layout (local_size_x = 8, local_size_y = 8) in;
+#ifdef OCCLUSION_PASS
+    layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
     void main() {
         int id = global_id;
-        int side = ubo.voxel_grid_side;
+        int side = ubo.params.voxel_grid_side;
         ivec3 pos = to3D(id, side);
         float o = 0.0;
         for (int z = -1; z < 2; z += 1) {
@@ -287,28 +300,28 @@ float voxelGridSample(ivec3 pos) {
         o = 1.0 - o;
         occlusion[id] = o;
     }
-#endif // EYEFACE_OCCLUSION
+#endif // OCCLUSION_PASS
 
-#ifdef EYEFACE_DRAW
-    layout (local_size_x = 8, local_size_y = 8) in;
+#ifdef DRAW_PASS
+    layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
     void main() {
         int id = global_id;
 
-        if (ubo.width * ubo.height <= id) {
+        if (ubo.frame.width * ubo.frame.height <= id) {
             return;
         }
 
         vec3 f_color = vec3(0.0);
 
         vec3 vpos = gbuffer[id].visual_pos;
-        float dist = length(vpos - ubo.eye.xyz);
+        float dist = length(vpos - ubo.camera.eye.xyz);
         // https://www.desmos.com/calculator/ted75acgr5
-        dist = 1.0/(1.0 + exp(-pow(clamp(dist - ubo.depth_offset, 0.0, 30.0), ubo.depth_attenuation) * 6.5 / ubo.depth_range + 3.5));
+        dist = 1.0/(1.0 + exp(-pow(clamp(dist - ubo.params.depth_offset, 0.0, 30.0), ubo.params.depth_attenuation) * 6.5 / ubo.params.depth_range + 3.5));
 
         int type = gbuffer[id].pix_type;
         if (type == 2) {
             vec3 pos = gbuffer[id].grid_pos;
-            int side = ubo.voxel_grid_side;
+            int side = ubo.params.voxel_grid_side;
 
             // trilinear occlusion sample :/
             ivec3 vi = ivec3(pos);
@@ -326,15 +339,15 @@ float voxelGridSample(ivec3 pos) {
                     }
                 }
             }
-            value = pow(max(value, 0.0)*ubo.occlusion_multiplier, ubo.occlusion_attenuation);
+            value = pow(max(value, 0.0)*ubo.params.occlusion_multiplier, ubo.params.occlusion_attenuation);
 
-            f_color = vec3(mix(ubo.occlusion_color.xyz, ubo.sparse_color.xyz, mix(value, 0.0, dist)));
+            f_color = vec3(mix(ubo.params.occlusion_color.xyz, ubo.params.sparse_color.xyz, mix(value, 0.0, dist)));
         } else if (type == 1) {
-            f_color = vec3(mix(ubo.sparse_color.xyz, ubo.occlusion_color.xyz, dist));
+            f_color = vec3(mix(ubo.params.sparse_color.xyz, ubo.params.occlusion_color.xyz, dist));
         } else {
-            f_color = ubo.background_color.xyz;
+            f_color = ubo.params.background_color.xyz;
         }
 
-        imageStore(screen, to2D(id, int(ubo.width)), vec4(f_color, 1.0));
+        imageStore(screen, to2D(id, int(ubo.frame.width)), vec4(f_color, 1.0));
     }
-#endif // EYEFACE_DRAW
+#endif // DRAW_PASS

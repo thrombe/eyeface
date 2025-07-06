@@ -2,24 +2,28 @@ const std = @import("std");
 
 const vk = @import("vulkan");
 
-const utils = @import("utils.zig");
-const Fuse = utils.Fuse;
-const ShaderUtils = utils.ShaderUtils;
+const utils_mod = @import("utils.zig");
+const Fuse = utils_mod.Fuse;
+const ShaderUtils = utils_mod.ShaderUtils;
+const Telemetry = utils_mod.Tracy;
+const cast = utils_mod.cast;
 
 const math = @import("math.zig");
 const Vec4 = math.Vec4;
+const Vec3 = math.Vec3;
 
 const transform = @import("transform.zig");
 
-const Engine = @import("engine.zig");
-const c = Engine.c;
+const engine_mod = @import("engine.zig");
+const Engine = engine_mod.Engine;
+const c = engine_mod.c;
+const Device = engine_mod.VulkanContext.Api.Device;
 
 const gui = @import("gui.zig");
 const GuiEngine = gui.GuiEngine;
 
 const render_utils = @import("render_utils.zig");
 const Swapchain = render_utils.Swapchain;
-const UniformBuffer = render_utils.UniformBuffer;
 const Buffer = render_utils.Buffer;
 const Image = render_utils.Image;
 const ComputePipeline = render_utils.ComputePipeline;
@@ -32,25 +36,21 @@ const allocator = main.allocator;
 
 pub const App = @This();
 
-uniforms: UniformBuffer,
-points_buffer: Buffer,
-voxel_buffer: Buffer,
-occlusion_buffer: Buffer,
-g_buffer: Buffer,
 screen_image: Image,
-screen_depth_buffer: Buffer,
-reduction_buffer: Buffer,
+resources: ResourceManager,
 descriptor_pool: DescriptorPool,
-compute_descriptor_set: DescriptorSet,
-// framebuffers are objects containing views of swapchain images
 command_pool: vk.CommandPool,
-stages: ShaderStageManager,
 
-const Device = Engine.VulkanContext.Api.Device;
+telemetry: Telemetry,
 
-pub fn init(engine: *Engine, app_state: *AppState) !@This() {
+pub fn init(engine: *Engine) !@This() {
     var ctx = &engine.graphics;
     const device = &ctx.device;
+
+    const res = try engine.window.get_res();
+
+    var telemetry = try utils_mod.Tracy.init();
+    errdefer telemetry.deinit();
 
     const cmd_pool = try device.createCommandPool(&.{
         .queue_family_index = ctx.graphics_queue.family,
@@ -60,35 +60,14 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
     }, null);
     errdefer device.destroyCommandPool(cmd_pool, null);
 
-    var uniforms = try UniformBuffer.new(try app_state.uniforms(engine.window), ctx);
-    errdefer uniforms.deinit(device);
-
-    var points_buffer = try Buffer.new_initialized(ctx, .{
-        .size = @sizeOf(f32) * 4 * app_state.max_points_x_64 * 64,
-    }, [4]f32{ 0, 0, 0, 1 }, cmd_pool);
-    errdefer points_buffer.deinit(device);
-
-    var voxels = try Buffer.new(ctx, .{
-        .size = @sizeOf(u32) * try std.math.powi(u32, app_state.voxels.max_side, 3),
-    });
-    errdefer voxels.deinit(device);
-    var occlusion = try Buffer.new(ctx, .{
-        .size = @sizeOf(u32) * try std.math.powi(u32, app_state.voxels.max_side, 3),
-    });
-    errdefer occlusion.deinit(device);
-
-    var g_buffer = try Buffer.new(ctx, .{
-        .size = @sizeOf(f32) * 4 * 2 * app_state.monitor_rez.width * app_state.monitor_rez.height,
-    });
-    errdefer g_buffer.deinit(device);
-
-    var screen = try Image.new(ctx, .{
+    var screen = try Image.new(ctx, cmd_pool, .{
         .img_type = .@"2d",
         .img_view_type = .@"2d",
         .format = .r16g16b16a16_sfloat,
+        .layout = .general,
         .extent = .{
-            .width = app_state.monitor_rez.width,
-            .height = app_state.monitor_rez.height,
+            .width = res.width,
+            .height = res.height,
             .depth = 1,
         },
         .usage = .{
@@ -100,177 +79,496 @@ pub fn init(engine: *Engine, app_state: *AppState) !@This() {
         },
     });
     errdefer screen.deinit(device);
-    try screen.transition(ctx, cmd_pool, .undefined, .general);
 
-    var screen_depth = try Buffer.new(ctx, .{
-        .size = @sizeOf(f32) * app_state.monitor_rez.width * app_state.monitor_rez.height,
+    var resources = try ResourceManager.init(engine, cmd_pool, .{
+        .monitor_rez = .{ .width = res.width, .height = res.height },
+        // TODO: This should come from AppState, but AppState is not created yet.
+        // This chicken-and-egg problem is a flaw in the current setup.
+        // For now, hardcode or pass default.
+        .max_points_x_64 = 1000000,
+        .max_voxel_side = 500,
     });
-    errdefer screen_depth.deinit(device);
-
-    var reduction = try Buffer.new(ctx, .{
-        .size = @sizeOf(f32) * 4 * 3 + @sizeOf(f32) * 3 * app_state.max_points_x_64 * 64,
-    });
-    errdefer reduction.deinit(device);
+    errdefer resources.deinit(device);
 
     var desc_pool = try DescriptorPool.new(device);
     errdefer desc_pool.deinit(device);
 
-    var compute_set_builder = desc_pool.set_builder();
-    defer compute_set_builder.deinit();
-    try compute_set_builder.add(&uniforms);
-    try compute_set_builder.add(&points_buffer);
-    try compute_set_builder.add(&voxels);
-    try compute_set_builder.add(&occlusion);
-    try compute_set_builder.add(&g_buffer);
-    try compute_set_builder.add(&screen);
-    try compute_set_builder.add(&screen_depth);
-    try compute_set_builder.add(&reduction);
-    var compute_set = try compute_set_builder.build(device);
-    errdefer compute_set.deinit(device);
-
-    const stages = try ShaderStageManager.init();
-    errdefer stages.deinit();
-
-    return .{
-        .uniforms = uniforms,
-        .points_buffer = points_buffer,
-        .voxel_buffer = voxels,
-        .occlusion_buffer = occlusion,
-        .g_buffer = g_buffer,
+    return @This(){
         .screen_image = screen,
-        .screen_depth_buffer = screen_depth,
-        .reduction_buffer = reduction,
+        .resources = resources,
         .descriptor_pool = desc_pool,
-        .compute_descriptor_set = compute_set,
         .command_pool = cmd_pool,
-        .stages = stages,
+        .telemetry = telemetry,
     };
 }
 
 pub fn deinit(self: *@This(), device: *Device) void {
     defer device.destroyCommandPool(self.command_pool, null);
-    defer self.uniforms.deinit(device);
-    defer self.points_buffer.deinit(device);
-    defer self.voxel_buffer.deinit(device);
-    defer self.occlusion_buffer.deinit(device);
-    defer self.g_buffer.deinit(device);
     defer self.screen_image.deinit(device);
-    defer self.screen_depth_buffer.deinit(device);
-    defer self.reduction_buffer.deinit(device);
-    defer self.compute_descriptor_set.deinit(device);
+    defer self.resources.deinit(device);
     defer self.descriptor_pool.deinit(device);
-    defer self.stages.deinit();
+    defer self.telemetry.deinit();
 }
 
-pub fn present(
+pub fn pre_reload(self: *@This()) !void {
+    _ = self;
+}
+
+pub fn post_reload(self: *@This()) !void {
+    _ = self;
+}
+
+pub fn tick(
     self: *@This(),
-    dynamic_state: *RendererState,
+    engine: *Engine,
+    app_state: *AppState,
     gui_renderer: *GuiEngine.GuiRenderer,
-    ctx: *Engine.VulkanContext,
-) !Swapchain.PresentState {
-    const cmdbuf = dynamic_state.cmdbuffer.bufs[dynamic_state.swapchain.image_index];
-    const gui_cmdbuf = gui_renderer.cmd_bufs[dynamic_state.swapchain.image_index];
+    gui_state: *GuiState,
+    renderer_state: *RendererState,
+) !bool {
+    self.telemetry.mark_frame() catch |e| utils_mod.dump_error(e);
+    self.telemetry.begin_sample(@src(), "frame.tick");
+    defer self.telemetry.end_sample();
+    self.telemetry.plot("last frame time (ms)", app_state.ticker.real.delta * std.time.ms_per_s);
 
-    return dynamic_state.swapchain.present(&[_]vk.CommandBuffer{ cmdbuf, gui_cmdbuf }, ctx, &self.uniforms) catch |err| switch (err) {
-        error.OutOfDateKHR => return .suboptimal,
-        else => |narrow| return narrow,
-    };
+    const ctx = &engine.graphics;
+
+    if (engine.window.should_close()) return false;
+    if (engine.window.is_minimized()) return true;
+
+    gui_renderer.render_start();
+
+    try app_state.tick(engine, self);
+
+    {
+        self.telemetry.begin_sample(@src(), "gui_state.tick");
+        defer self.telemetry.end_sample();
+
+        gui_state.tick(self, app_state);
+    }
+    {
+        self.telemetry.begin_sample(@src(), "gui_renderer.render_end");
+        defer self.telemetry.end_sample();
+
+        try gui_renderer.render_end(&engine.graphics.device, &renderer_state.swapchain);
+    }
+    {
+        self.telemetry.begin_sample(@src(), ".queue_wait_idle");
+        defer self.telemetry.end_sample();
+        try ctx.device.queueWaitIdle(ctx.graphics_queue.handle);
+    }
+    {
+        self.telemetry.begin_sample(@src(), ".framerate_cap_sleep");
+        defer self.telemetry.end_sample();
+
+        const frametime = app_state.ticker.real.timer.read();
+        const min_frametime_ns = std.time.ns_per_s / app_state.fps_cap;
+        if (frametime < min_frametime_ns) {
+            std.Thread.sleep(min_frametime_ns - frametime);
+        }
+    }
+    {
+        self.telemetry.begin_sample(@src(), ".gpu_buffer_uploads");
+        defer self.telemetry.end_sample();
+        try self.resources.upload(&ctx.device);
+    }
+
+    if (renderer_state.stages.update()) {
+        _ = app_state.shader_fuse.fuse();
+    }
+
+    if (app_state.shader_fuse.unfuse() or app_state.reset_render_state.unfuse()) {
+        self.telemetry.begin_sample(@src(), ".recreating_pipelines");
+        defer self.telemetry.end_sample();
+        try renderer_state.recreate_pipelines(engine, self, app_state);
+    }
+
+    if (app_state.cmdbuf_fuse.unfuse() or app_state.reset_render_state.unfuse()) {
+        self.telemetry.begin_sample(@src(), ".recreating_command_buffers");
+        defer self.telemetry.end_sample();
+        try renderer_state.recreate_cmdbuf(engine, self, app_state);
+    }
+
+    {
+        self.telemetry.begin_sample(@src(), ".present");
+        defer self.telemetry.end_sample();
+        try renderer_state.swapchain.present_start(ctx);
+        const present_state = renderer_state.swapchain.present_end(
+            &[_]vk.CommandBuffer{
+                renderer_state.cmdbuffer.bufs[renderer_state.swapchain.image_index],
+                gui_renderer.cmd_bufs[renderer_state.swapchain.image_index],
+            },
+            ctx,
+        ) catch |err| switch (err) {
+            error.OutOfDateKHR => blk: {
+                _ = app_state.resize_fuse.fuse();
+                break :blk .suboptimal;
+            },
+            else => |narrow| return narrow,
+        };
+        if (present_state == .suboptimal) {
+            _ = app_state.resize_fuse.fuse();
+        }
+    }
+
+    if (engine.window.resize_fuse.unfuse()) {
+        _ = app_state.resize_fuse.fuse();
+    }
+
+    if (app_state.resize_fuse.unfuse()) {
+        self.telemetry.begin_sample(@src(), ".recreating_swapchain");
+        defer self.telemetry.end_sample();
+        try ctx.device.queueWaitIdle(ctx.graphics_queue.handle);
+        try renderer_state.recreate_swapchain(engine, app_state);
+        gui_renderer.deinit(&engine.graphics.device);
+        gui_renderer.* = try GuiEngine.GuiRenderer.init(engine, &renderer_state.swapchain);
+    }
+
+    return true;
 }
+
+pub const ResourceManager = struct {
+    uniform: Uniforms,
+    uniform_buf: Buffer,
+    points_buffer: Buffer,
+    voxel_buffer: Buffer,
+    occlusion_buffer: Buffer,
+    g_buffer: Buffer,
+    screen_depth_buffer: Buffer,
+    reduction_buffer: Buffer,
+
+    pub fn init(engine: *Engine, pool: vk.CommandPool, v: struct {
+        monitor_rez: struct { width: u32, height: u32 },
+        max_points_x_64: u32,
+        max_voxel_side: u32,
+    }) !@This() {
+        const ctx = &engine.graphics;
+        const device = &ctx.device;
+
+        var uniform_buf = try Buffer.new(ctx, .{
+            .size = @sizeOf(Uniforms.shader_type),
+            .usage = .{ .uniform_buffer_bit = true },
+            .memory_type = .{ .host_visible_bit = true, .host_coherent_bit = true },
+            .desc_type = .uniform_buffer,
+        });
+        errdefer uniform_buf.deinit(device);
+
+        var points_buffer = try Buffer.new_initialized(ctx, .{
+            .size = @sizeOf(f32) * 4 * v.max_points_x_64 * 64,
+            .usage = .{ .storage_buffer_bit = true },
+        }, [4]f32{ 0, 0, 0, 1 }, pool);
+        errdefer points_buffer.deinit(device);
+
+        var voxels = try Buffer.new(ctx, .{
+            .size = @sizeOf(u32) * try std.math.powi(u32, v.max_voxel_side, 3),
+            .usage = .{ .storage_buffer_bit = true },
+        });
+        errdefer voxels.deinit(device);
+
+        var occlusion = try Buffer.new(ctx, .{
+            .size = @sizeOf(u32) * try std.math.powi(u32, v.max_voxel_side, 3),
+            .usage = .{ .storage_buffer_bit = true },
+        });
+        errdefer occlusion.deinit(device);
+
+        var g_buffer = try Buffer.new(ctx, .{
+            .size = @sizeOf(f32) * 4 * 2 * v.monitor_rez.width * v.monitor_rez.height,
+            .usage = .{ .storage_buffer_bit = true },
+        });
+        errdefer g_buffer.deinit(device);
+
+        var screen_depth = try Buffer.new(ctx, .{
+            .size = @sizeOf(f32) * v.monitor_rez.width * v.monitor_rez.height,
+            .usage = .{ .storage_buffer_bit = true },
+        });
+        errdefer screen_depth.deinit(device);
+
+        var reduction = try Buffer.new(ctx, .{
+            .size = @sizeOf(f32) * 4 * 3 + @sizeOf(f32) * 3 * v.max_points_x_64 * 64,
+            .usage = .{ .storage_buffer_bit = true },
+        });
+        errdefer reduction.deinit(device);
+
+        return @This(){
+            .uniform = std.mem.zeroes(Uniforms),
+            .uniform_buf = uniform_buf,
+            .points_buffer = points_buffer,
+            .voxel_buffer = voxels,
+            .occlusion_buffer = occlusion,
+            .g_buffer = g_buffer,
+            .screen_depth_buffer = screen_depth,
+            .reduction_buffer = reduction,
+        };
+    }
+
+    pub fn deinit(self: *@This(), device: *Device) void {
+        self.uniform_buf.deinit(device);
+        self.points_buffer.deinit(device);
+        self.voxel_buffer.deinit(device);
+        self.occlusion_buffer.deinit(device);
+        self.g_buffer.deinit(device);
+        self.screen_depth_buffer.deinit(device);
+        self.reduction_buffer.deinit(device);
+    }
+
+    pub fn add_binds(self: *@This(), builder: *render_utils.DescriptorSet.Builder, screen_image: *Image) !void {
+        try builder.add(&self.uniform_buf, UniformBinds.uniforms.bind());
+        try builder.add(&self.points_buffer, UniformBinds.points.bind());
+        try builder.add(&self.voxel_buffer, UniformBinds.voxels.bind());
+        try builder.add(&self.occlusion_buffer, UniformBinds.occlusion.bind());
+        try builder.add(&self.g_buffer, UniformBinds.gbuffer.bind());
+        try builder.add(screen_image, UniformBinds.screen.bind());
+        try builder.add(&self.screen_depth_buffer, UniformBinds.screen_depth.bind());
+        try builder.add(&self.reduction_buffer, UniformBinds.reduction.bind());
+    }
+
+    pub fn upload(self: *@This(), device: *Device) !void {
+        const maybe_mapped = try device.mapMemory(self.uniform_buf.memory, 0, vk.WHOLE_SIZE, .{});
+        const mapped = maybe_mapped orelse return error.MappingMemoryFailed;
+        defer device.unmapMemory(self.uniform_buf.memory);
+
+        const mem: *Uniforms.shader_type = @ptrCast(@alignCast(mapped));
+        mem.* = ShaderUtils.shader_object(Uniforms.shader_type, self.uniform);
+    }
+
+    pub const DescSets = enum(u32) { compute };
+    pub const UniformBinds = enum(u32) {
+        uniforms,
+        points,
+        voxels,
+        occlusion,
+        gbuffer,
+        screen,
+        screen_depth,
+        reduction,
+        pub fn bind(self: @This()) u32 {
+            return @intFromEnum(self);
+        }
+    };
+
+    pub const PushConstants = struct {
+        seed: i32,
+    };
+
+    pub const Uniforms = struct {
+        transforms: [AppState.TransformSet.len]transform.Transform,
+        camera: ShaderUtils.Camera3D,
+        mouse: ShaderUtils.Mouse,
+        frame: ShaderUtils.Frame,
+        params: Params,
+
+        const Params = struct {
+            occlusion_color: Vec4,
+            sparse_color: Vec4,
+            background_color: Vec4,
+            voxel_grid_center: Vec4,
+            voxel_grid_side: i32,
+            voxel_grid_compensation_perc: f32,
+            occlusion_multiplier: f32,
+            occlusion_attenuation: f32,
+            depth_range: f32,
+            depth_offset: f32,
+            depth_attenuation: f32,
+            points: i32,
+            iterations: i32,
+            voxelization_points: i32,
+            voxelization_iterations: i32,
+            reduction_points: i32,
+            lambda: f32,
+            visual_scale: f32,
+            visual_transform_lambda: f32,
+        };
+
+        pub const shader_type = ShaderUtils.shader_type(@This());
+    };
+};
 
 pub const RendererState = struct {
     swapchain: Swapchain,
     cmdbuffer: CmdBuffer,
-    compute_pipelines: []ComputePipeline,
+    compute_desc_set: DescriptorSet,
+    stages: ShaderStageManager,
+    pipelines: Pipelines,
 
     // not owned
     pool: vk.CommandPool,
 
+    const Pipelines = struct {
+        clear_bufs: ComputePipeline,
+        iterate: ComputePipeline,
+        reduce_min: ComputePipeline,
+        reduce_max: ComputePipeline,
+        project: ComputePipeline,
+        occlusion: ComputePipeline,
+        draw: ComputePipeline,
+
+        fn deinit(self: *@This(), device: *Device) void {
+            self.clear_bufs.deinit(device);
+            self.iterate.deinit(device);
+            self.reduce_min.deinit(device);
+            self.reduce_max.deinit(device);
+            self.project.deinit(device);
+            self.occlusion.deinit(device);
+            self.draw.deinit(device);
+        }
+    };
+
     pub fn init(app: *App, engine: *Engine, app_state: *AppState) !@This() {
+        _ = app_state;
         const ctx = &engine.graphics;
         const device = &ctx.device;
 
-        const compute_pipelines = blk: {
-            const screen_sze = blk1: {
-                const s = engine.window.extent.width * engine.window.extent.height;
-                break :blk1 s / 64 + @as(u32, @intCast(@intFromBool(s % 64 > 0)));
-            };
-            const voxel_grid_sze = blk1: {
-                const s = try std.math.powi(u32, @intCast(app_state.voxels.side), 3);
-                break :blk1 s / 64 + @as(u32, @intCast(@intFromBool(s % 64 > 0)));
-            };
-            var pipelines = [_]struct {
-                typ: ShaderStageManager.ShaderStage,
-                group_x: u32 = 1,
-                group_y: u32 = 1,
-                group_z: u32 = 1,
-                reduction_factor: ?u32 = null,
-                pipeline: ComputePipeline = undefined,
-            }{
-                .{
-                    .typ = .clear_bufs,
-                    .group_x = @max(voxel_grid_sze, screen_sze),
-                },
-                .{
-                    .typ = .iterate,
-                    .group_x = @intCast(app_state.points_x_64),
-                },
-                .{
-                    .typ = .reduce_min,
-                    .reduction_factor = 256,
-                    .group_x = @intCast(app_state.reduction_points_x_64),
-                },
-                .{
-                    .typ = .reduce_max,
-                    .reduction_factor = 256,
-                    .group_x = @intCast(app_state.reduction_points_x_64),
-                },
-                .{
-                    .typ = .project,
-                    .group_x = @intCast(app_state.points_x_64),
-                },
-                .{
-                    .typ = .occlusion,
-                    .group_x = voxel_grid_sze,
-                },
-                .{
-                    .typ = .draw,
-                    .group_x = screen_sze,
-                },
-            };
+        var arena = std.heap.ArenaAllocator.init(allocator.*);
+        defer arena.deinit();
+        const alloc = arena.allocator();
 
-            for (pipelines, 0..) |p, i| {
-                pipelines[i].pipeline = try ComputePipeline.new(device, .{
-                    .shader = app.stages.shaders.map.get(p.typ).code,
-                    .desc_set_layouts = &[_]vk.DescriptorSetLayout{app.compute_descriptor_set.layout},
-                });
-            }
+        var gen = try utils_mod.ShaderUtils.GlslBindingGenerator.init();
+        defer gen.deinit();
+        try gen.add_struct("Transform", transform.Transform);
+        try gen.add_struct("Mouse", ShaderUtils.Mouse);
+        try gen.add_struct("Camera3D", ShaderUtils.Camera3D);
+        try gen.add_struct("Frame", ShaderUtils.Frame);
+        try gen.add_struct("Params", ResourceManager.Uniforms.Params);
+        try gen.add_struct("Uniforms", ResourceManager.Uniforms);
+        try gen.add_struct("PushConstants", ResourceManager.PushConstants);
+        try gen.add_enum("_set", ResourceManager.DescSets);
+        try gen.add_enum("_bind", ResourceManager.UniformBinds);
+        try gen.dump_shader("src/uniforms.glsl");
 
-            break :blk pipelines;
-        };
-        errdefer {
-            for (compute_pipelines) |p| {
-                p.pipeline.deinit(device);
-            }
-        }
+        const includes = try alloc.dupe([]const u8, &[_][]const u8{"src"});
+        var stages_info = std.ArrayList(utils_mod.ShaderCompiler.ShaderInfo).init(alloc);
+        try stages_info.appendSlice(&[_]utils_mod.ShaderCompiler.ShaderInfo{
+            .{ .name = "clear_bufs", .stage = .compute, .path = "src/shader.glsl", .define = try alloc.dupe([]const u8, &[_][]const u8{ "CLEAR_BUFS_PASS", "COMPUTE_PASS" }), .include = includes },
+            .{ .name = "iterate", .stage = .compute, .path = "src/shader.glsl", .define = try alloc.dupe([]const u8, &[_][]const u8{ "ITERATE_PASS", "COMPUTE_PASS" }), .include = includes },
+            .{ .name = "reduce_min", .stage = .compute, .path = "src/shader.glsl", .define = try alloc.dupe([]const u8, &[_][]const u8{ "REDUCE_PASS", "REDUCE_MIN_PASS", "COMPUTE_PASS" }), .include = includes },
+            .{ .name = "reduce_max", .stage = .compute, .path = "src/shader.glsl", .define = try alloc.dupe([]const u8, &[_][]const u8{ "REDUCE_PASS", "REDUCE_MAX_PASS", "COMPUTE_PASS" }), .include = includes },
+            .{ .name = "project", .stage = .compute, .path = "src/shader.glsl", .define = try alloc.dupe([]const u8, &[_][]const u8{ "PROJECT_PASS", "COMPUTE_PASS" }), .include = includes },
+            .{ .name = "occlusion", .stage = .compute, .path = "src/shader.glsl", .define = try alloc.dupe([]const u8, &[_][]const u8{ "OCCLUSION_PASS", "COMPUTE_PASS" }), .include = includes },
+            .{ .name = "draw", .stage = .compute, .path = "src/shader.glsl", .define = try alloc.dupe([]const u8, &[_][]const u8{ "DRAW_PASS", "COMPUTE_PASS" }), .include = includes },
+        });
+
+        var stages = try ShaderStageManager.init(stages_info.items);
+        errdefer stages.deinit();
 
         var swapchain = try Swapchain.init(ctx, engine.window.extent, .{});
         errdefer swapchain.deinit(device);
 
-        var cmdbuf = try CmdBuffer.init(device, .{ .pool = app.command_pool, .size = swapchain.swap_images.len });
+        var self: @This() = .{
+            .stages = stages,
+            .pipelines = undefined,
+            .compute_desc_set = undefined,
+            .swapchain = swapchain,
+            .pool = app.command_pool,
+            .cmdbuffer = undefined,
+        };
+
+        try self.create_pipelines(engine, app, false);
+        errdefer self.compute_desc_set.deinit(device);
+        errdefer self.pipelines.deinit(device);
+
+        self.cmdbuffer = try self.create_cmdbuf(engine, app, app_state);
+        errdefer self.cmdbuffer.deinit(device);
+
+        return self;
+    }
+
+    pub fn recreate_pipelines(self: *@This(), engine: *Engine, app: *App, app_state: *AppState) !void {
+        try self.create_pipelines(engine, app, true);
+        _ = app_state.cmdbuf_fuse.fuse();
+    }
+
+    pub fn recreate_swapchain(self: *@This(), engine: *Engine, app_state: *AppState) !void {
+        try self.swapchain.recreate(&engine.graphics, engine.window.extent, .{});
+        _ = app_state.cmdbuf_fuse.fuse();
+    }
+
+    pub fn recreate_cmdbuf(self: *@This(), engine: *Engine, app: *App, app_state: *AppState) !void {
+        const device = &engine.graphics.device;
+        const cmdbuffer = try self.create_cmdbuf(engine, app, app_state);
+        self.cmdbuffer.deinit(device);
+        self.cmdbuffer = cmdbuffer;
+    }
+
+    fn create_pipelines(self: *@This(), engine: *Engine, app: *App, initialized: bool) !void {
+        const device = &engine.graphics.device;
+
+        var set_builder = app.descriptor_pool.set_builder();
+        defer set_builder.deinit();
+        try app.resources.add_binds(&set_builder, &app.screen_image);
+
+        var compute_set = try set_builder.build(device);
+        errdefer compute_set.deinit(device);
+
+        const desc_set_layouts = &[_]vk.DescriptorSetLayout{compute_set.layout};
+        const push_constant_ranges = &[_]vk.PushConstantRange{.{
+            .stage_flags = .{ .compute_bit = true },
+            .offset = 0,
+            .size = @sizeOf(ResourceManager.PushConstants),
+        }};
+
+        const p_info = .{
+            .desc_set_layouts = desc_set_layouts,
+            .push_constant_ranges = push_constant_ranges,
+        };
+
+        if (initialized) self.pipelines.deinit(device);
+
+        self.pipelines.clear_bufs = try ComputePipeline.new(device, p_info{ .shader = self.stages.shaders.map.get("clear_bufs").?.code });
+        self.pipelines.iterate = try ComputePipeline.new(device, p_info{ .shader = self.stages.shaders.map.get("iterate").?.code });
+        self.pipelines.reduce_min = try ComputePipeline.new(device, p_info{ .shader = self.stages.shaders.map.get("reduce_min").?.code });
+        self.pipelines.reduce_max = try ComputePipeline.new(device, p_info{ .shader = self.stages.shaders.map.get("reduce_max").?.code });
+        self.pipelines.project = try ComputePipeline.new(device, p_info{ .shader = self.stages.shaders.map.get("project").?.code });
+        self.pipelines.occlusion = try ComputePipeline.new(device, p_info{ .shader = self.stages.shaders.map.get("occlusion").?.code });
+        self.pipelines.draw = try ComputePipeline.new(device, p_info{ .shader = self.stages.shaders.map.get("draw").?.code });
+
+        if (initialized) self.compute_desc_set.deinit(device);
+        self.compute_desc_set = compute_set;
+    }
+
+    pub fn create_cmdbuf(self: *@This(), engine: *Engine, app: *App, app_state: *AppState) !CmdBuffer {
+        const ctx = &engine.graphics;
+        const device = &ctx.device;
+        const alloc = app_state.arena.allocator();
+
+        var cmdbuf = try CmdBuffer.init(device, .{ .pool = app.command_pool, .size = self.swapchain.swap_images.len });
         errdefer cmdbuf.deinit(device);
 
+        const screen_sze = blk1: {
+            const s = engine.window.extent.width * engine.window.extent.height;
+            break :blk1 s / 64 + @as(u32, @intFromBool(s % 64 > 0)));
+        };
+        const voxel_grid_sze = blk1: {
+            const s = try std.math.powi(u32, @intCast(app_state.voxels.side), 3);
+            break :blk1 s / 64 + @as(u32, @intCast(@intFromBool(s % 64 > 0)));
+        };
+
+        const passes = [_]struct {
+            pipeline: ComputePipeline,
+            group_x: u32,
+            reduction_factor: ?u32,
+        }{
+            .{ .pipeline = self.pipelines.clear_bufs, .group_x = @max(voxel_grid_sze, screen_sze), .reduction_factor = null },
+            .{ .pipeline = self.pipelines.iterate, .group_x = @intCast(app_state.points_x_64), .reduction_factor = null },
+            .{ .pipeline = self.pipelines.reduce_min, .group_x = @intCast(app_state.reduction_points_x_64), .reduction_factor = 256 },
+            .{ .pipeline = self.pipelines.reduce_max, .group_x = @intCast(app_state.reduction_points_x_64), .reduction_factor = 256 },
+            .{ .pipeline = self.pipelines.project, .group_x = @intCast(app_state.points_x_64), .reduction_factor = null },
+            .{ .pipeline = self.pipelines.occlusion, .group_x = voxel_grid_sze, .reduction_factor = null },
+            .{ .pipeline = self.pipelines.draw, .group_x = screen_sze, .reduction_factor = null },
+        };
+
         try cmdbuf.begin(device);
-        for (compute_pipelines) |p| {
-            cmdbuf.bindCompute(device, .{ .pipeline = p.pipeline, .desc_set = app.compute_descriptor_set.set });
+        for (passes) |p| {
+            cmdbuf.bindCompute(device, .{ .pipeline = p.pipeline, .desc_sets = &.{self.compute_desc_set.set} });
+
             var x = p.group_x;
             while (x >= 1) {
-                cmdbuf.dispatch(device, .{ .x = x, .y = p.group_y, .z = p.group_z });
+                const constants = try alloc.create(ResourceManager.PushConstants);
+                constants.* = .{ .seed = app_state.rng.random().int(i32) };
+                cmdbuf.push_constants(device, p.pipeline.layout, std.mem.asBytes(constants), .{ .compute_bit = true });
+                cmdbuf.dispatch(device, .{ .x = x, .y = 1, .z = 1 });
                 cmdbuf.memBarrier(device, .{});
 
-                if (x == 1) {
-                    break;
-                }
-
+                if (x == 1) break;
                 if (p.reduction_factor) |r| {
                     x = x / r + @as(u32, @intCast(@intFromBool(x % r > 0)));
                 } else {
@@ -278,119 +576,38 @@ pub const RendererState = struct {
                 }
             }
         }
-        cmdbuf.drawIntoSwapchain(device, .{
+        cmdbuf.draw_into_swapchain(device, .{
             .image = app.screen_image.image,
             .image_layout = .general,
-            .size = swapchain.extent,
-            .swapchain = &swapchain,
+            .size = self.swapchain.extent,
+            .swapchain = &self.swapchain,
             .queue_family = ctx.graphics_queue.family,
         });
         try cmdbuf.end(device);
 
-        return .{
-            .compute_pipelines = blk: {
-                const pipelines = try allocator.alloc(ComputePipeline, compute_pipelines.len);
-                for (compute_pipelines, 0..) |p, i| {
-                    pipelines[i] = p.pipeline;
-                }
-                break :blk pipelines;
-            },
-            .swapchain = swapchain,
-            .cmdbuffer = cmdbuf,
-            .pool = app.command_pool,
-        };
+        return cmdbuf;
     }
 
     pub fn deinit(self: *@This(), device: *Device) void {
-        try self.swapchain.waitForAllFences(device);
-
+        try self.swapchain.waitForAll(device);
         defer self.swapchain.deinit(device);
         defer self.cmdbuffer.deinit(device);
-
-        defer {
-            for (self.compute_pipelines) |p| {
-                p.deinit(device);
-            }
-            allocator.free(self.compute_pipelines);
-        }
+        defer self.compute_desc_set.deinit(device);
+        defer self.stages.deinit();
+        defer self.pipelines.deinit(device);
     }
 };
 
 const ShaderStageManager = struct {
-    shaders: CompilerUtils.Stages,
-    compiler: CompilerUtils.Compiler,
+    shaders: utils_mod.ShaderCompiler.Stages,
+    compiler: utils_mod.ShaderCompiler.Compiler,
 
-    const ShaderStage = enum {
-        clear_bufs,
-        iterate,
-        reduce_min,
-        reduce_max,
-        project,
-        occlusion,
-        draw,
-    };
-    const CompilerUtils = utils.ShaderCompiler(struct {
-        pub fn get_metadata(_: CompilerUtils.ShaderInfo) !@This() {
-            return .{};
-        }
-    }, ShaderStage);
-
-    pub fn init() !@This() {
-        var comp = try CompilerUtils.Compiler.init(.{ .opt = .fast, .env = .vulkan1_3 }, &[_]CompilerUtils.ShaderInfo{
-            .{
-                .typ = .clear_bufs,
-                .stage = .compute,
-                .path = "./src/eyeface.glsl",
-                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_CLEAR_BUFS" },
-                .include = &[_][]const u8{"./src"},
-            },
-            .{
-                .typ = .iterate,
-                .stage = .compute,
-                .path = "./src/eyeface.glsl",
-                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_ITERATE" },
-                .include = &[_][]const u8{"./src"},
-            },
-            .{
-                .typ = .reduce_min,
-                .stage = .compute,
-                .path = "./src/eyeface.glsl",
-                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_REDUCE", "EYEFACE_REDUCE_MIN" },
-                .include = &[_][]const u8{"./src"},
-            },
-            .{
-                .typ = .reduce_max,
-                .stage = .compute,
-                .path = "./src/eyeface.glsl",
-                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_REDUCE", "EYEFACE_REDUCE_MAX" },
-                .include = &[_][]const u8{"./src"},
-            },
-            .{
-                .typ = .project,
-                .stage = .compute,
-                .path = "./src/eyeface.glsl",
-                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_PROJECT" },
-                .include = &[_][]const u8{"./src"},
-            },
-            .{
-                .typ = .occlusion,
-                .stage = .compute,
-                .path = "./src/eyeface.glsl",
-                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_OCCLUSION" },
-                .include = &[_][]const u8{"./src"},
-            },
-            .{
-                .typ = .draw,
-                .stage = .compute,
-                .path = "./src/eyeface.glsl",
-                .define = &[_][]const u8{ "EYEFACE_COMPUTE", "EYEFACE_DRAW" },
-                .include = &[_][]const u8{"./src"},
-            },
-        });
+    pub fn init(stages: []const utils_mod.ShaderCompiler.ShaderInfo) !@This() {
+        var comp = try utils_mod.ShaderCompiler.Compiler.init(.{ .opt = .fast, .env = .vulkan1_3 }, stages);
         errdefer comp.deinit();
 
         return .{
-            .shaders = try CompilerUtils.Stages.init(&comp),
+            .shaders = try utils_mod.ShaderCompiler.Stages.init(&comp, stages),
             .compiler = comp,
         };
     }
@@ -408,14 +625,16 @@ const ShaderStageManager = struct {
 pub const AppState = struct {
     pub const TransformSet = transform.TransformSet(5);
 
+    ticker: utils_mod.SimulationTicker,
+
     monitor_rez: struct { width: u32, height: u32 },
     mouse: extern struct { x: i32 = 0, y: i32 = 0, left: bool = false, right: bool = false } = .{},
     camera: math.Camera,
+    controller: CameraController = .{},
 
     frame: u32 = 0,
-    time: f32 = 0,
-    deltatime: f32 = 0,
     fps_cap: u32 = 500,
+    focus: bool = false,
 
     transform_generator: TransformSet.Builder.Generator = .{},
     transforms: TransformSet.Builder,
@@ -454,71 +673,70 @@ pub const AppState = struct {
 
     rng: std.Random.Xoshiro256,
     reset_render_state: Fuse = .{},
-    uniform_buffer: []u8,
-    uniform_shader_dumped: bool = false,
+    resize_fuse: Fuse = .{},
+    cmdbuf_fuse: Fuse = .{},
+    shader_fuse: Fuse = .{},
+    arena: std.heap.ArenaAllocator,
 
-    pub fn init(window: *Engine.Window) !@This() {
+    const CameraController = struct {
+        pos: Vec3 = .{},
+        sensitivity: f32 = 0.1,
+        speed: f32 = 5,
+        pitch: f32 = 0,
+        yaw: f32 = 0,
+        did_move: bool = false,
+        did_rotate: bool = false,
+    };
+
+    pub fn init(window: *engine_mod.Window, app: *App) !@This() {
+        _ = app;
         const mouse = window.poll_mouse();
         const sze = try window.get_res();
 
         var rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
-
         const generator = TransformSet.Builder.Generator{};
 
         return .{
+            .ticker = try .init(),
             .monitor_rez = .{ .width = sze.width, .height = sze.height },
-            .camera = math.Camera.init(Vec4{ .z = -5 }, math.Camera.constants.basis.vulkan),
+            .camera = math.Camera.init(math.Camera.constants.basis.opengl, math.Camera.constants.basis.vulkan),
+            .controller = .{ .pos = .{ 0, 0, -5 } },
             .mouse = .{ .x = mouse.x, .y = mouse.y, .left = mouse.left },
             .transforms = transform.sirpinski_pyramid(),
             .target_transforms = generator.generate(rng.random()),
             .transform_generator = generator,
             .rng = rng,
-            .uniform_buffer = try allocator.alloc(u8, 0),
+            .arena = std.heap.ArenaAllocator.init(allocator.*),
         };
     }
 
     pub fn deinit(self: *@This()) void {
-        allocator.free(self.uniform_buffer);
+        self.arena.deinit();
     }
 
-    pub fn tick(self: *@This(), lap: u64, engine: *Engine, app: *App) !void {
-        const window = engine.window;
-        const delta = @as(f32, @floatFromInt(lap)) / @as(f32, @floatFromInt(std.time.ns_per_s));
-        // std.debug.print("fps: {d}\n", .{@as(u32, @intFromFloat(1.0 / delta))});
-        const w = window.is_pressed(c.GLFW_KEY_W);
-        const a = window.is_pressed(c.GLFW_KEY_A);
-        const s = window.is_pressed(c.GLFW_KEY_S);
-        const d = window.is_pressed(c.GLFW_KEY_D);
-        const shift = window.is_pressed(c.GLFW_KEY_LEFT_SHIFT);
-        const ctrl = window.is_pressed(c.GLFW_KEY_LEFT_CONTROL);
-        const mouse = window.poll_mouse();
+    pub fn pre_reload(self: *@This()) !void {
+        _ = self;
+    }
 
-        var dx: i32 = 0;
-        var dy: i32 = 0;
-        if (mouse.left) {
-            dx = mouse.x - self.mouse.x;
-            dy = mouse.y - self.mouse.y;
-        }
-        self.camera.tick(delta, .{ .dx = dx, .dy = dy }, .{
-            .w = w,
-            .a = a,
-            .s = s,
-            .d = d,
-            .shift = shift,
-            .ctrl = ctrl,
-        });
+    pub fn post_reload(self: *@This()) !void {
+        _ = self.resize_fuse.fuse();
+        _ = self.shader_fuse.fuse();
+        _ = self.cmdbuf_fuse.fuse();
+    }
 
-        self.mouse.left = mouse.left;
-        self.mouse.x = mouse.x;
-        self.mouse.y = mouse.y;
+    pub fn tick(self: *@This(), engine: *Engine, app: *App) !void {
+        app.telemetry.begin_sample(@src(), "app_state.tick");
+        defer app.telemetry.end_sample();
+        defer _ = self.arena.reset(.retain_capacity);
 
-        self.frame += 1;
-        self.time += delta;
-        self.deltatime = delta;
+        self.ticker.tick_real();
+        engine.window.tick();
+
+        try self.tick_local_input(engine, app);
 
         if (!self.pause_t) {
             // - [Lerp smoothing is broken](https://youtu.be/LSNQuFEDOyQ?si=-_bGNwqZFC_j5dJF&t=3012)
-            const e = 1.0 - std.math.exp(-self.lambda * delta);
+            const e = 1.0 - std.math.exp(-self.lambda * self.ticker.real.delta);
             self.transforms = self.transforms.mix(&self.target_transforms, e);
             self.t = std.math.lerp(self.t, 1.0, e);
         }
@@ -527,76 +745,154 @@ pub const AppState = struct {
             self.target_transforms = self.transform_generator.generate(self.rng.random());
         }
 
-        const p = window.is_pressed(c.GLFW_KEY_P);
-        if (p) {
-            try render_utils.dump_image_to_file(
-                &app.screen_image,
-                &engine.graphics,
-                app.command_pool,
-                window.extent,
-                "./images",
-            );
+        try self.tick_prepare_render(engine, app);
+    }
+
+    fn tick_local_input(self: *@This(), engine: *Engine, app: *App) !void {
+        const window = engine.window;
+        const delta = self.ticker.real.delta;
+
+        var input = window.input();
+
+        // local input tick
+        {
+            app.telemetry.begin_sample(@src(), ".local_input");
+            defer app.telemetry.end_sample();
+
+            var mouse = &input.mouse;
+            var kb = &input.keys;
+
+            const imgui_io = &c.ImGui_GetIO()[0];
+            if (imgui_io.WantCaptureMouse) {
+                mouse.left = .none;
+                mouse.right = .none;
+            }
+            if (imgui_io.WantCaptureKeyboard) {}
+
+            if (kb.p.just_pressed()) {
+                try render_utils.dump_image_to_file(
+                    &app.screen_image,
+                    &engine.graphics,
+                    app.command_pool,
+                    window.extent,
+                    "images",
+                );
+            }
+
+            if (mouse.left.just_pressed() and !self.focus) {
+                self.focus = true;
+                imgui_io.ConfigFlags |= c.ImGuiConfigFlags_NoMouse;
+                window.hide_cursor(true);
+            }
+            if (kb.escape.just_pressed() and !self.focus) {
+                window.queue_close();
+            }
+            if (kb.escape.just_pressed() and self.focus) {
+                self.focus = false;
+                imgui_io.ConfigFlags &= ~c.ImGuiConfigFlags_NoMouse;
+                window.hide_cursor(false);
+            }
+
+            self.mouse.left = mouse.left.pressed();
+            self.mouse.x = @intFromFloat(mouse.x);
+            self.mouse.y = @intFromFloat(mouse.y);
+
+            self.frame += 1;
+
+            if (!self.focus) {
+                mouse.dx = 0;
+                mouse.dy = 0;
+            }
+        }
+
+        // Camera Logic
+        {
+            const mouse = &input.mouse;
+            const kb = &input.keys;
+
+            self.controller.did_rotate = (mouse.dx != 0 or mouse.dy != 0);
+            if (self.controller.did_rotate) {
+                self.controller.yaw -= @as(f32, @floatFromInt(mouse.dx)) * self.controller.sensitivity;
+                self.controller.pitch -= @as(f32, @floatFromInt(mouse.dy)) * self.controller.sensitivity;
+                self.controller.pitch = std.math.clamp(self.controller.pitch, -std.math.pi / 2.0 + 0.001, std.math.pi / 2.0 - 0.001);
+            }
+
+            const rot = self.camera.rot_quat(self.controller.pitch, self.controller.yaw);
+            var move_dir = Vec3{};
+            if (kb.w.pressed()) move_dir = move_dir.add(rot.rotate_vector(self.camera.world_basis.fwd));
+            if (kb.s.pressed()) move_dir = move_dir.add(rot.rotate_vector(self.camera.world_basis.fwd.scale(-1)));
+            if (kb.a.pressed()) move_dir = move_dir.add(rot.rotate_vector(self.camera.world_basis.right.scale(-1)));
+            if (kb.d.pressed()) move_dir = move_dir.add(rot.rotate_vector(self.camera.world_basis.right));
+            if (kb.shift.pressed()) move_dir = move_dir.add(rot.rotate_vector(self.camera.world_basis.up.scale(-1)));
+            if (kb.ctrl.pressed()) move_dir = move_dir.add(rot.rotate_vector(self.camera.world_basis.up));
+
+            self.controller.did_move = move_dir.dot(move_dir) > 0.0001;
+            if (self.controller.did_move) {
+                self.controller.pos = self.controller.pos.add(move_dir.normalize().scale(delta * self.controller.speed));
+            }
         }
     }
 
-    pub fn uniforms(self: *@This(), window: *Engine.Window) ![]u8 {
-        const transforms = self.transforms.build().transforms;
+    fn tick_prepare_render(self: *@This(), engine: *Engine, app: *App) !void {
+        try self.prepare_uniforms(&app.resources, engine.window);
+    }
 
-        const uniform = .{
-            .transforms = transforms,
-            .world_to_screen = self.camera.world_to_screen_mat(window.extent.width, window.extent.height),
-            .eye = self.camera.pos,
-            .mouse = ShaderUtils.Mouse{
+    pub fn prepare_uniforms(self: *@This(), resources: *ResourceManager, window: *engine_mod.Window) !void {
+        const rot = self.camera.rot_quat(self.controller.pitch, self.controller.yaw);
+        const fwd = rot.rotate_vector(self.camera.world_basis.fwd);
+        const right = rot.rotate_vector(self.camera.world_basis.right);
+        const up = rot.rotate_vector(self.camera.world_basis.up);
+
+        resources.uniform = .{
+            .transforms = self.transforms.build().transforms,
+            .camera = .{
+                .eye = self.controller.pos,
+                .fwd = fwd,
+                .right = right,
+                .up = up,
+                .meta = .{
+                    .did_move = @intFromBool(self.controller.did_move),
+                    .did_rotate = @intFromBool(self.controller.did_rotate),
+                    .did_change = @intFromBool(self.controller.did_move or self.controller.did_rotate),
+                },
+            },
+            .mouse = .{
                 .x = self.mouse.x,
                 .y = self.mouse.y,
-                .left = @intCast(@intFromBool(self.mouse.left)),
-                .right = @intCast(@intFromBool(self.mouse.right)),
+                .left = @intFromBool(self.mouse.left),
+                .right = @intFromBool(self.mouse.right),
             },
-            .occlusion_color = self.occlusion_color,
-            .sparse_color = self.sparse_color,
-            .background_color = self.background_color,
-            .voxel_grid_center = self.voxels.center,
-            .voxel_grid_side = self.voxels.side,
-            .voxel_grid_compensation_perc = self.voxel_grid_compensation_perc,
-            .occlusion_multiplier = self.occlusion_multiplier,
-            .occlusion_attenuation = self.occlusion_attenuation,
-            .depth_range = self.depth_range,
-            .depth_offset = self.depth_offset,
-            .depth_attenuation = self.depth_attenuation,
-            .points = self.points_x_64 * 64,
-            .iterations = self.iterations,
-            .voxelization_points = self.voxelization_points_x_64 * 64,
-            .voxelization_iterations = self.voxelization_iterations,
-            .reduction_points = self.reduction_points_x_64 * 64,
-            .frame = self.frame,
-            .time = self.time,
-            .deltatime = self.deltatime,
-            .lambda = self.lambda,
-            .visual_scale = self.visual_scale,
-            .visual_transform_lambda = self.visual_transform_lambda,
-            .width = window.extent.width,
-            .height = window.extent.height,
-            .monitor_width = self.monitor_rez.width,
-            .monitor_height = self.monitor_rez.height,
+            .frame = .{
+                .frame = self.frame,
+                .time = self.ticker.real.time_f,
+                .deltatime = self.ticker.real.delta,
+                .width = @intCast(window.extent.width),
+                .height = @intCast(window.extent.height),
+                .monitor_width = @intCast(self.monitor_rez.width),
+                .monitor_height = @intCast(self.monitor_rez.height),
+            },
+            .params = .{
+                .occlusion_color = self.occlusion_color,
+                .sparse_color = self.sparse_color,
+                .background_color = self.background_color,
+                .voxel_grid_center = self.voxels.center,
+                .voxel_grid_side = self.voxels.side,
+                .voxel_grid_compensation_perc = self.voxel_grid_compensation_perc,
+                .occlusion_multiplier = self.occlusion_multiplier,
+                .occlusion_attenuation = self.occlusion_attenuation,
+                .depth_range = self.depth_range,
+                .depth_offset = self.depth_offset,
+                .depth_attenuation = self.depth_attenuation,
+                .points = self.points_x_64 * 64,
+                .iterations = self.iterations,
+                .voxelization_points = self.voxelization_points_x_64 * 64,
+                .voxelization_iterations = self.voxelization_iterations,
+                .reduction_points = self.reduction_points_x_64 * 64,
+                .lambda = self.lambda,
+                .visual_scale = self.visual_scale,
+                .visual_transform_lambda = self.visual_transform_lambda,
+            },
         };
-
-        const ubo = ShaderUtils.create_uniform_object(@TypeOf(uniform), uniform);
-        const ubo_buffer = std.mem.asBytes(&ubo);
-
-        if (self.uniform_buffer.len != ubo_buffer.len) {
-            allocator.free(self.uniform_buffer);
-            self.uniform_buffer = try allocator.alloc(u8, ubo_buffer.len);
-        }
-
-        if (!self.uniform_shader_dumped) {
-            self.uniform_shader_dumped = true;
-
-            try ShaderUtils.dump_glsl_uniform(ubo, "./src/eyeface_uniforms.glsl");
-        }
-
-        @memcpy(self.uniform_buffer, ubo_buffer);
-
-        return self.uniform_buffer;
     }
 };
 
@@ -606,17 +902,20 @@ pub const GuiState = struct {
     const ShearConstraints = TransformSet.Builder.Generator.ShearConstraints;
     const Vec3Constraints = TransformSet.Builder.Generator.Vec3Constraints;
 
-    frame_times: [10]f32 = std.mem.zeroes([10]f32),
-    frame_times_i: usize = 10,
+    frame_times: [60]f32 = std.mem.zeroes([60]f32),
+    frame_times_i: usize = 0,
+    total: f32 = 0,
 
-    pub fn tick(self: *@This(), state: *AppState, lap: u64) void {
-        const delta = @as(f32, @floatFromInt(lap)) / @as(f32, @floatFromInt(std.time.ns_per_s));
+    pub fn tick(self: *@This(), app: *App, state: *AppState) void {
+        _ = app;
+        const delta = state.ticker.real.delta;
         const generator = &state.transform_generator;
 
-        self.frame_times_i += 1;
-        self.frame_times_i = @rem(self.frame_times_i, self.frame_times.len);
+        self.frame_times_i = @rem(self.frame_times_i + 1, self.frame_times.len);
+        self.total -= self.frame_times[self.frame_times_i];
         self.frame_times[self.frame_times_i] = delta * std.time.ms_per_s;
-        const frametime = std.mem.max(f32, &self.frame_times);
+        self.total += self.frame_times[self.frame_times_i];
+        const frametime = self.total / @as(f32, @floatFromInt(self.frame_times.len));
 
         c.ImGui_SetNextWindowPos(.{ .x = 5, .y = 5 }, c.ImGuiCond_Once);
         defer c.ImGui_End();
@@ -643,8 +942,8 @@ pub const GuiState = struct {
     fn editState(self: *@This(), state: *AppState) void {
         _ = self;
 
-        _ = c.ImGui_SliderFloat("Speed", &state.camera.speed, 0.1, 10.0);
-        _ = c.ImGui_SliderFloat("Sensitivity", &state.camera.sensitivity, 0.001, 2.0);
+        _ = c.ImGui_SliderFloat("Speed", &state.controller.speed, 0.1, 10.0);
+        _ = c.ImGui_SliderFloat("Sensitivity", &state.controller.sensitivity, 0.001, 2.0);
         _ = c.ImGui_SliderInt("FPS cap", @ptrCast(&state.fps_cap), 5, 500);
 
         _ = c.ImGui_SliderFloat("Visual Scale", &state.visual_scale, 0.01, 10.0);
@@ -679,10 +978,10 @@ pub const GuiState = struct {
 
     fn editVec3Constraints(self: *@This(), comptime label: [:0]const u8, constraints: *Vec3Constraints) void {
         c.ImGui_PushID(label);
+        defer c.ImGui_PopID();
         self.editConstraint(".X", &constraints.x);
         self.editConstraint(".Y", &constraints.y);
         self.editConstraint(".Z", &constraints.z);
-        c.ImGui_PopID();
     }
 
     fn editConstraint(self: *@This(), comptime label: [:0]const u8, constraint: *Constraints) void {
@@ -701,12 +1000,12 @@ pub const GuiState = struct {
 
     fn editShear(self: *@This(), comptime label: [:0]const u8, shear: *ShearConstraints) void {
         c.ImGui_PushID(label);
+        defer c.ImGui_PopID();
         self.editConstraint(".X.y", &shear.x.y);
         self.editConstraint(".X.z", &shear.x.z);
         self.editConstraint(".Y.x", &shear.y.x);
         self.editConstraint(".Y.z", &shear.y.z);
         self.editConstraint(".Z.x", &shear.z.x);
         self.editConstraint(".Z.y", &shear.z.y);
-        c.ImGui_PopID();
     }
 };

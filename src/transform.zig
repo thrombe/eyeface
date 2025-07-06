@@ -3,12 +3,16 @@ const std = @import("std");
 const utils = @import("utils.zig");
 
 const math = @import("math.zig");
+const Vec2 = math.Vec2;
+const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
 const Mat4x4 = math.Mat4x4;
 
 pub fn TransformSet(n: u32) type {
     return extern struct {
         transforms: [n]Mat4x4 = std.mem.zeroes([n]Mat4x4),
+
+        pub const len = n;
 
         pub const Builder = struct {
             transforms: [n]Transforms,
@@ -54,25 +58,25 @@ pub fn TransformSet(n: u32) type {
             }
 
             pub const Transforms = struct {
-                translate: Vec4,
+                translate: Vec3,
                 shear: struct {
-                    x: Vec4,
-                    y: Vec4,
-                    z: Vec4,
+                    x: Vec3,
+                    y: Vec3,
+                    z: Vec3,
                 },
-                scale: Vec4,
-                rot: Vec4,
+                scale: Vec3,
+                rot: Vec3,
 
                 pub fn init() @This() {
                     return .{
-                        .translate = Vec4{},
+                        .translate = .{},
                         .shear = .{
-                            .x = Vec4{},
-                            .y = Vec4{},
-                            .z = Vec4{},
+                            .x = .{},
+                            .y = .{},
+                            .z = .{},
                         },
-                        .scale = Vec4.splat3(1),
-                        .rot = Vec4.quat_identity_rot(),
+                        .scale = .splat(1),
+                        .rot = .{},
                     };
                 }
 
@@ -150,7 +154,7 @@ pub fn TransformSet(n: u32) type {
                         };
                     }
 
-                    pub fn random(self: *const @This(), _rng: std.Random) Vec4 {
+                    pub fn random(self: *const @This(), _rng: std.Random) Vec3 {
                         const rng = math.Rng.init(_rng);
                         return .{
                             .x = rng.with2(self.x).next(),
@@ -196,10 +200,8 @@ pub fn TransformSet(n: u32) type {
 pub fn sirpinski_pyramid() TransformSet(5).Builder {
     var this = TransformSet(5).Builder.init();
 
-    const s = Vec4.splat3(0.5);
-
     inline for (0..5) |i| {
-        this.transforms[i].scale = s;
+        this.transforms[i].scale = .splat(0.5);
     }
 
     this.transforms[0].translate = .{ .x = 0.0, .y = 1.0, .z = 0.0 };

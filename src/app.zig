@@ -1021,6 +1021,8 @@ pub const GuiState = struct {
     fn editState(self: *@This(), state: *AppState) void {
         _ = self;
 
+        var reset: bool = false;
+
         _ = c.ImGui_SliderFloat("Speed", &state.controller.speed, 0.1, 10.0);
         _ = c.ImGui_SliderFloat("Sensitivity", &state.controller.sensitivity, 0.001, 2.0);
         _ = c.ImGui_SliderInt("FPS cap", @ptrCast(&state.fps_cap), 5, 500);
@@ -1028,11 +1030,11 @@ pub const GuiState = struct {
         _ = c.ImGui_SliderFloat("Visual Scale", &state.visual_scale, 0.01, 10.0);
         _ = c.ImGui_SliderFloat("Visual Transform Lambda", &state.visual_transform_lambda, 0.0, 25.0);
         _ = c.ImGui_SliderFloat("voxel grid compensation perc", &state.voxel_grid_compensation_perc, -1.0, 1.0);
-        _ = c.ImGui_SliderInt("points (x 64)", @ptrCast(&state.points_x_64), 0, @intCast(state.max_points_x_64));
+        reset = c.ImGui_SliderInt("points (x 64)", @ptrCast(&state.points_x_64), 0, @intCast(state.max_points_x_64)) or reset;
         state.voxelization_points_x_64 = @min(state.voxelization_points_x_64, state.points_x_64);
         _ = c.ImGui_SliderInt("voxelization points (x 64)", @ptrCast(&state.voxelization_points_x_64), 0, @intCast(state.points_x_64));
         state.reduction_points_x_64 = @min(state.reduction_points_x_64, state.points_x_64);
-        _ = c.ImGui_SliderInt("reduction points (x 64)", @ptrCast(&state.reduction_points_x_64), 0, @intCast(state.points_x_64));
+        reset = c.ImGui_SliderInt("reduction points (x 64)", @ptrCast(&state.reduction_points_x_64), 0, @intCast(state.points_x_64)) or reset;
         _ = c.ImGui_SliderInt("iterations", @ptrCast(&state.iterations), 0, 100);
         _ = c.ImGui_SliderInt("voxelization iterations", @ptrCast(&state.voxelization_iterations), 0, 20);
 
@@ -1052,7 +1054,11 @@ pub const GuiState = struct {
 
         _ = c.ImGui_DragFloat3("Voxels Center", @ptrCast(&state.voxels.center));
 
-        _ = c.ImGui_SliderInt("Voxel Side", @ptrCast(&state.voxels.side), 1, @intCast(state.voxels.max_side));
+        reset = c.ImGui_SliderInt("Voxel Side", @ptrCast(&state.voxels.side), 1, @intCast(state.voxels.max_side)) or reset;
+
+        if (reset) {
+            _ = state.cmdbuf_fuse.fuse();
+        }
     }
 
     fn editVec3Constraints(self: *@This(), comptime label: [:0]const u8, constraints: *Vec3Constraints) void {

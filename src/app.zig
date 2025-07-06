@@ -351,7 +351,7 @@ pub const ResourceManager = struct {
     };
 
     pub const Uniforms = struct {
-        transforms: [AppState.TransformSet.len]transform.Transform,
+        transforms: [AppState.TransformSet.len]math.Mat4x4,
         camera: ShaderUtils.Camera3D,
         mouse: ShaderUtils.Mouse,
         frame: ShaderUtils.Frame,
@@ -414,7 +414,6 @@ pub const RendererState = struct {
     };
 
     pub fn init(app: *App, engine: *Engine, app_state: *AppState) !@This() {
-        _ = app_state;
         const ctx = &engine.graphics;
         const device = &ctx.device;
 
@@ -424,7 +423,6 @@ pub const RendererState = struct {
 
         var gen = try utils_mod.ShaderUtils.GlslBindingGenerator.init();
         defer gen.deinit();
-        try gen.add_struct("Transform", transform.Transform);
         try gen.add_struct("Mouse", ShaderUtils.Mouse);
         try gen.add_struct("Camera3D", ShaderUtils.Camera3D);
         try gen.add_struct("Frame", ShaderUtils.Frame);
@@ -438,13 +436,55 @@ pub const RendererState = struct {
         const includes = try alloc.dupe([]const u8, &[_][]const u8{"src"});
         var stages_info = std.ArrayList(utils_mod.ShaderCompiler.ShaderInfo).init(alloc);
         try stages_info.appendSlice(&[_]utils_mod.ShaderCompiler.ShaderInfo{
-            .{ .name = "clear_bufs", .stage = .compute, .path = "src/shader.glsl", .define = try alloc.dupe([]const u8, &[_][]const u8{ "CLEAR_BUFS_PASS", "COMPUTE_PASS" }), .include = includes },
-            .{ .name = "iterate", .stage = .compute, .path = "src/shader.glsl", .define = try alloc.dupe([]const u8, &[_][]const u8{ "ITERATE_PASS", "COMPUTE_PASS" }), .include = includes },
-            .{ .name = "reduce_min", .stage = .compute, .path = "src/shader.glsl", .define = try alloc.dupe([]const u8, &[_][]const u8{ "REDUCE_PASS", "REDUCE_MIN_PASS", "COMPUTE_PASS" }), .include = includes },
-            .{ .name = "reduce_max", .stage = .compute, .path = "src/shader.glsl", .define = try alloc.dupe([]const u8, &[_][]const u8{ "REDUCE_PASS", "REDUCE_MAX_PASS", "COMPUTE_PASS" }), .include = includes },
-            .{ .name = "project", .stage = .compute, .path = "src/shader.glsl", .define = try alloc.dupe([]const u8, &[_][]const u8{ "PROJECT_PASS", "COMPUTE_PASS" }), .include = includes },
-            .{ .name = "occlusion", .stage = .compute, .path = "src/shader.glsl", .define = try alloc.dupe([]const u8, &[_][]const u8{ "OCCLUSION_PASS", "COMPUTE_PASS" }), .include = includes },
-            .{ .name = "draw", .stage = .compute, .path = "src/shader.glsl", .define = try alloc.dupe([]const u8, &[_][]const u8{ "DRAW_PASS", "COMPUTE_PASS" }), .include = includes },
+            .{
+                .name = "clear_bufs",
+                .stage = .compute,
+                .path = "src/shader.glsl",
+                .define = try alloc.dupe([]const u8, &[_][]const u8{ "CLEAR_BUFS_PASS", "COMPUTE_PASS" }),
+                .include = includes,
+            },
+            .{
+                .name = "iterate",
+                .stage = .compute,
+                .path = "src/shader.glsl",
+                .define = try alloc.dupe([]const u8, &[_][]const u8{ "ITERATE_PASS", "COMPUTE_PASS" }),
+                .include = includes,
+            },
+            .{
+                .name = "reduce_min",
+                .stage = .compute,
+                .path = "src/shader.glsl",
+                .define = try alloc.dupe([]const u8, &[_][]const u8{ "REDUCE_PASS", "REDUCE_MIN_PASS", "COMPUTE_PASS" }),
+                .include = includes,
+            },
+            .{
+                .name = "reduce_max",
+                .stage = .compute,
+                .path = "src/shader.glsl",
+                .define = try alloc.dupe([]const u8, &[_][]const u8{ "REDUCE_PASS", "REDUCE_MAX_PASS", "COMPUTE_PASS" }),
+                .include = includes,
+            },
+            .{
+                .name = "project",
+                .stage = .compute,
+                .path = "src/shader.glsl",
+                .define = try alloc.dupe([]const u8, &[_][]const u8{ "PROJECT_PASS", "COMPUTE_PASS" }),
+                .include = includes,
+            },
+            .{
+                .name = "occlusion",
+                .stage = .compute,
+                .path = "src/shader.glsl",
+                .define = try alloc.dupe([]const u8, &[_][]const u8{ "OCCLUSION_PASS", "COMPUTE_PASS" }),
+                .include = includes,
+            },
+            .{
+                .name = "draw",
+                .stage = .compute,
+                .path = "src/shader.glsl",
+                .define = try alloc.dupe([]const u8, &[_][]const u8{ "DRAW_PASS", "COMPUTE_PASS" }),
+                .include = includes,
+            },
         });
 
         var stages = try ShaderStageManager.init(stages_info.items);
@@ -506,20 +546,43 @@ pub const RendererState = struct {
             .size = @sizeOf(ResourceManager.PushConstants),
         }};
 
-        const p_info = .{
-            .desc_set_layouts = desc_set_layouts,
-            .push_constant_ranges = push_constant_ranges,
-        };
-
         if (initialized) self.pipelines.deinit(device);
 
-        self.pipelines.clear_bufs = try ComputePipeline.new(device, p_info{ .shader = self.stages.shaders.map.get("clear_bufs").?.code });
-        self.pipelines.iterate = try ComputePipeline.new(device, p_info{ .shader = self.stages.shaders.map.get("iterate").?.code });
-        self.pipelines.reduce_min = try ComputePipeline.new(device, p_info{ .shader = self.stages.shaders.map.get("reduce_min").?.code });
-        self.pipelines.reduce_max = try ComputePipeline.new(device, p_info{ .shader = self.stages.shaders.map.get("reduce_max").?.code });
-        self.pipelines.project = try ComputePipeline.new(device, p_info{ .shader = self.stages.shaders.map.get("project").?.code });
-        self.pipelines.occlusion = try ComputePipeline.new(device, p_info{ .shader = self.stages.shaders.map.get("occlusion").?.code });
-        self.pipelines.draw = try ComputePipeline.new(device, p_info{ .shader = self.stages.shaders.map.get("draw").?.code });
+        self.pipelines.clear_bufs = try ComputePipeline.new(device, .{
+            .shader = self.stages.shaders.map.get("clear_bufs").?.code,
+            .desc_set_layouts = desc_set_layouts,
+            .push_constant_ranges = push_constant_ranges,
+        });
+        self.pipelines.iterate = try ComputePipeline.new(device, .{
+            .shader = self.stages.shaders.map.get("iterate").?.code,
+            .desc_set_layouts = desc_set_layouts,
+            .push_constant_ranges = push_constant_ranges,
+        });
+        self.pipelines.reduce_min = try ComputePipeline.new(device, .{
+            .shader = self.stages.shaders.map.get("reduce_min").?.code,
+            .desc_set_layouts = desc_set_layouts,
+            .push_constant_ranges = push_constant_ranges,
+        });
+        self.pipelines.reduce_max = try ComputePipeline.new(device, .{
+            .shader = self.stages.shaders.map.get("reduce_max").?.code,
+            .desc_set_layouts = desc_set_layouts,
+            .push_constant_ranges = push_constant_ranges,
+        });
+        self.pipelines.project = try ComputePipeline.new(device, .{
+            .shader = self.stages.shaders.map.get("project").?.code,
+            .desc_set_layouts = desc_set_layouts,
+            .push_constant_ranges = push_constant_ranges,
+        });
+        self.pipelines.occlusion = try ComputePipeline.new(device, .{
+            .shader = self.stages.shaders.map.get("occlusion").?.code,
+            .desc_set_layouts = desc_set_layouts,
+            .push_constant_ranges = push_constant_ranges,
+        });
+        self.pipelines.draw = try ComputePipeline.new(device, .{
+            .shader = self.stages.shaders.map.get("draw").?.code,
+            .desc_set_layouts = desc_set_layouts,
+            .push_constant_ranges = push_constant_ranges,
+        });
 
         if (initialized) self.compute_desc_set.deinit(device);
         self.compute_desc_set = compute_set;
@@ -535,7 +598,7 @@ pub const RendererState = struct {
 
         const screen_sze = blk1: {
             const s = engine.window.extent.width * engine.window.extent.height;
-            break :blk1 s / 64 + @as(u32, @intFromBool(s % 64 > 0)));
+            break :blk1 s / 64 + @as(u32, @intFromBool(s % 64 > 0));
         };
         const voxel_grid_sze = blk1: {
             const s = try std.math.powi(u32, @intCast(app_state.voxels.side), 3);
@@ -700,7 +763,7 @@ pub const AppState = struct {
             .ticker = try .init(),
             .monitor_rez = .{ .width = sze.width, .height = sze.height },
             .camera = math.Camera.init(math.Camera.constants.basis.opengl, math.Camera.constants.basis.vulkan),
-            .controller = .{ .pos = .{ 0, 0, -5 } },
+            .controller = .{ .pos = .{ .z = -5 } },
             .mouse = .{ .x = mouse.x, .y = mouse.y, .left = mouse.left },
             .transforms = transform.sirpinski_pyramid(),
             .target_transforms = generator.generate(rng.random()),
@@ -812,8 +875,8 @@ pub const AppState = struct {
 
             self.controller.did_rotate = (mouse.dx != 0 or mouse.dy != 0);
             if (self.controller.did_rotate) {
-                self.controller.yaw -= @as(f32, @floatFromInt(mouse.dx)) * self.controller.sensitivity;
-                self.controller.pitch -= @as(f32, @floatFromInt(mouse.dy)) * self.controller.sensitivity;
+                self.controller.yaw += @as(f32, @floatCast(mouse.dx)) * self.controller.sensitivity;
+                self.controller.pitch -= @as(f32, @floatCast(mouse.dy)) * self.controller.sensitivity;
                 self.controller.pitch = std.math.clamp(self.controller.pitch, -std.math.pi / 2.0 + 0.001, std.math.pi / 2.0 - 0.001);
             }
 

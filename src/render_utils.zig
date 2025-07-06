@@ -3,13 +3,16 @@ const std = @import("std");
 const vk = @import("vulkan");
 
 const utils = @import("utils.zig");
+const cast = utils.cast;
 
-const Engine = @import("engine.zig");
+const engine_mod = @import("engine.zig");
+const Engine = engine_mod.Engine;
+const VulkanContext = engine_mod.VulkanContext;
 
 const main = @import("main.zig");
 const allocator = main.allocator;
 
-const Device = Engine.VulkanContext.Api.Device;
+const Device = engine_mod.VulkanContext.Api.Device;
 
 pub const DescriptorPool = struct {
     pool: vk.DescriptorPool,
@@ -18,6 +21,10 @@ pub const DescriptorPool = struct {
         const pool_sizes = [_]vk.DescriptorPoolSize{
             .{
                 .type = .uniform_buffer,
+                .descriptor_count = 100,
+            },
+            .{
+                .type = .uniform_buffer_dynamic,
                 .descriptor_count = 100,
             },
             .{
@@ -75,16 +82,16 @@ pub const DescriptorSet = struct {
         layout_binding: std.ArrayListUnmanaged(vk.DescriptorSetLayoutBinding) = .{},
         desc_set_update: std.ArrayListUnmanaged(vk.WriteDescriptorSet) = .{},
 
-        pub fn add(self: *@This(), binding: anytype) !void {
-            try self.layout_binding.append(allocator, binding.layout_binding(@intCast(self.layout_binding.items.len)));
+        pub fn add(self: *@This(), resource: anytype, binding: u32) !void {
+            try self.layout_binding.appendSlice(allocator.*, &resource.layout_binding(binding));
 
             // NOTE: undefined is written to in .build()
-            try self.desc_set_update.append(allocator, binding.write_desc_set(@intCast(self.desc_set_update.items.len), undefined));
+            try self.desc_set_update.appendSlice(allocator.*, &resource.write_desc_set(binding));
         }
 
         pub fn deinit(self: *@This()) void {
-            self.layout_binding.deinit(allocator);
-            self.desc_set_update.deinit(allocator);
+            self.layout_binding.deinit(allocator.*);
+            self.desc_set_update.deinit(allocator.*);
         }
 
         pub fn build(self: *@This(), device: *Device) !DescriptorSet {
@@ -125,13 +132,15 @@ pub const ComputePipeline = struct {
     const Args = struct {
         shader: []u32,
         desc_set_layouts: []const vk.DescriptorSetLayout,
+        push_constant_ranges: []const vk.PushConstantRange = &.{},
     };
 
     pub fn new(device: *Device, v: Args) !@This() {
         const layout = try device.createPipelineLayout(&.{
-            // .flags: PipelineLayoutCreateFlags = .{},
             .set_layout_count = @intCast(v.desc_set_layouts.len),
             .p_set_layouts = v.desc_set_layouts.ptr,
+            .push_constant_range_count = @intCast(v.push_constant_ranges.len),
+            .p_push_constant_ranges = v.push_constant_ranges.ptr,
         }, null);
         errdefer device.destroyPipelineLayout(layout, null);
 
@@ -172,11 +181,38 @@ pub const GraphicsPipeline = struct {
     pipeline: vk.Pipeline,
     layout: vk.PipelineLayout,
 
+    pub const RenderMode = enum {
+        lines,
+        solid_triangles,
+        wireframe_triangles,
+    };
+
     const Args = struct {
         vert: []u32,
         frag: []u32,
-        pass: vk.RenderPass,
+        vertex_info: struct {
+            binding_desc: []const vk.VertexInputBindingDescription = &.{},
+            attr_desc: []const vk.VertexInputAttributeDescription = &.{},
+        } = .{},
+        dynamic_info: ?struct {
+            image_format: vk.Format,
+            depth_format: vk.Format,
+        },
+        pass: ?vk.RenderPass = null,
         desc_set_layouts: []const vk.DescriptorSetLayout,
+        push_constant_ranges: []const vk.PushConstantRange = &.{},
+        alpha_blend: vk.PipelineColorBlendAttachmentState = .{
+            .blend_enable = vk.FALSE,
+            .src_color_blend_factor = .one,
+            .dst_color_blend_factor = .zero,
+            .color_blend_op = .add,
+            .src_alpha_blend_factor = .one,
+            .dst_alpha_blend_factor = .zero,
+            .alpha_blend_op = .add,
+            .color_write_mask = .{ .r_bit = true, .g_bit = true, .b_bit = true, .a_bit = true },
+        },
+        cull_mode: vk.CullModeFlags = .{ .back_bit = true },
+        render_mode: RenderMode = .solid_triangles,
     };
 
     pub fn new(device: *Device, v: Args) !@This() {
@@ -184,8 +220,8 @@ pub const GraphicsPipeline = struct {
             .flags = .{},
             .set_layout_count = @intCast(v.desc_set_layouts.len),
             .p_set_layouts = v.desc_set_layouts.ptr,
-            .push_constant_range_count = 0,
-            .p_push_constant_ranges = undefined,
+            .push_constant_range_count = @intCast(v.push_constant_ranges.len),
+            .p_push_constant_ranges = v.push_constant_ranges.ptr,
         }, null);
         errdefer device.destroyPipelineLayout(layout, null);
 
@@ -215,14 +251,18 @@ pub const GraphicsPipeline = struct {
         };
 
         const pvisci = vk.PipelineVertexInputStateCreateInfo{
-            // .vertex_binding_description_count = 0,
-            // .p_vertex_binding_descriptions = @ptrCast(&Vertex.binding_description),
-            // .vertex_attribute_description_count = Vertex.attribute_description.len,
-            // .p_vertex_attribute_descriptions = &Vertex.attribute_description,
+            .vertex_binding_description_count = @intCast(v.vertex_info.binding_desc.len),
+            .p_vertex_binding_descriptions = @ptrCast(v.vertex_info.binding_desc.ptr),
+            .vertex_attribute_description_count = @intCast(v.vertex_info.attr_desc.len),
+            .p_vertex_attribute_descriptions = @ptrCast(v.vertex_info.attr_desc.ptr),
         };
 
         const piasci = vk.PipelineInputAssemblyStateCreateInfo{
-            .topology = .triangle_list,
+            .topology = switch (v.render_mode) {
+                .lines => .line_list,
+                .solid_triangles => .triangle_list,
+                .wireframe_triangles => .triangle_list,
+            },
             .primitive_restart_enable = vk.FALSE,
         };
 
@@ -233,18 +273,39 @@ pub const GraphicsPipeline = struct {
             .p_scissors = undefined, // set in createCommandBuffers with cmdSetScissor
         };
 
-        const prsci = vk.PipelineRasterizationStateCreateInfo{
+        var prsci = vk.PipelineRasterizationStateCreateInfo{
             .depth_clamp_enable = vk.FALSE,
             .rasterizer_discard_enable = vk.FALSE,
             .polygon_mode = .fill,
-            .cull_mode = .{ .back_bit = false },
-            .front_face = .clockwise,
+            .cull_mode = v.cull_mode,
+            .front_face = .counter_clockwise,
             .depth_bias_enable = vk.FALSE,
             .depth_bias_constant_factor = 0,
             .depth_bias_clamp = 0,
             .depth_bias_slope_factor = 0,
             .line_width = 1,
         };
+
+        switch (v.render_mode) {
+            .lines => {
+                prsci.line_width = 1;
+                prsci.polygon_mode = .line;
+
+                // welp. depth bias might not work for lines :/
+                // https://github.com/gpuweb/gpuweb/issues/4729#issue-2386851106
+            },
+            .solid_triangles => {
+                prsci.polygon_mode = .fill;
+            },
+            .wireframe_triangles => {
+                prsci.polygon_mode = .line;
+
+                prsci.depth_bias_enable = vk.TRUE;
+                prsci.depth_bias_constant_factor = 1.0;
+                prsci.depth_bias_clamp = 0.0;
+                prsci.depth_bias_slope_factor = 1.0;
+            },
+        }
 
         const pmsci = vk.PipelineMultisampleStateCreateInfo{
             .rasterization_samples = .{ .@"1_bit" = true },
@@ -254,16 +315,7 @@ pub const GraphicsPipeline = struct {
             .alpha_to_one_enable = vk.FALSE,
         };
 
-        const pcbas = vk.PipelineColorBlendAttachmentState{
-            .blend_enable = vk.FALSE,
-            .src_color_blend_factor = .one,
-            .dst_color_blend_factor = .zero,
-            .color_blend_op = .add,
-            .src_alpha_blend_factor = .one,
-            .dst_alpha_blend_factor = .zero,
-            .alpha_blend_op = .add,
-            .color_write_mask = .{ .r_bit = true, .g_bit = true, .b_bit = true, .a_bit = true },
-        };
+        const pcbas = v.alpha_blend;
 
         const pcbsci = vk.PipelineColorBlendStateCreateInfo{
             .logic_op_enable = vk.FALSE,
@@ -281,7 +333,7 @@ pub const GraphicsPipeline = struct {
         };
 
         const depth_stencil_info = vk.PipelineDepthStencilStateCreateInfo{
-            .depth_test_enable = vk.TRUE,
+            .depth_test_enable = vk.FALSE,
             .depth_write_enable = vk.TRUE,
             .depth_compare_op = .less,
             .depth_bounds_test_enable = vk.FALSE,
@@ -308,6 +360,14 @@ pub const GraphicsPipeline = struct {
             .max_depth_bounds = 1.0,
         };
 
+        const dynamic_info = if (v.dynamic_info) |info| vk.PipelineRenderingCreateInfoKHR{
+            .view_mask = 0,
+            .color_attachment_count = 1,
+            .p_color_attachment_formats = &[_]vk.Format{info.image_format},
+            .depth_attachment_format = info.depth_format,
+            .stencil_attachment_format = .undefined,
+        } else null;
+
         const gpci = vk.GraphicsPipelineCreateInfo{
             .flags = .{},
             .stage_count = 2,
@@ -322,7 +382,8 @@ pub const GraphicsPipeline = struct {
             .p_color_blend_state = &pcbsci,
             .p_dynamic_state = &pdsci,
             .layout = layout,
-            .render_pass = v.pass,
+            .render_pass = if (v.pass) |pass| pass else .null_handle,
+            .p_next = if (dynamic_info) |*info| info else null,
             .subpass = 0,
             .base_pipeline_handle = .null_handle,
             .base_pipeline_index = -1,
@@ -449,6 +510,7 @@ pub const Image = struct {
     view: vk.ImageView,
     sampler: vk.Sampler,
     io: vk.DescriptorImageInfo,
+    bind_desc_type: vk.DescriptorType,
 
     pub const BufferView = struct {
         buf: Buffer,
@@ -463,11 +525,84 @@ pub const Image = struct {
         img_view_type: vk.ImageViewType,
         format: vk.Format,
         extent: vk.Extent3D,
+        bind_desc_type: vk.DescriptorType = .storage_image,
+        tiling: vk.ImageTiling = .optimal,
+        layout: vk.ImageLayout = .general,
         usage: vk.ImageUsageFlags = .{},
         view_aspect_mask: vk.ImageAspectFlags = .{},
     };
 
-    pub fn new(ctx: *Engine.VulkanContext, v: Args) !@This() {
+    pub fn new_from_slice(ctx: *VulkanContext, pool: vk.CommandPool, v: struct {
+        extent: vk.Extent2D,
+        bind_desc_type: vk.DescriptorType,
+        layout: vk.ImageLayout,
+        usage: vk.ImageUsageFlags = .{},
+    }, slice: [][4]u8) !@This() {
+        const S = @TypeOf(slice);
+        const E = std.meta.Elem(S);
+        const size = slice.len * @sizeOf(E);
+
+        if (v.extent.width * v.extent.height != slice.len) {
+            return error.SizeMismatch;
+        }
+
+        const extent = vk.Extent3D{ .width = v.extent.width, .height = v.extent.height, .depth = 1 };
+        var this = try @This().new(
+            ctx,
+            pool,
+            .{
+                .usage = v.usage.merge(.{
+                    .transfer_dst_bit = true,
+                }),
+                .format = .r8g8b8a8_unorm,
+                .img_type = .@"2d",
+                .img_view_type = .@"2d",
+                .tiling = .optimal,
+                .layout = .transfer_dst_optimal,
+                .view_aspect_mask = .{ .color_bit = true },
+                .extent = extent,
+                .bind_desc_type = v.bind_desc_type,
+            },
+        );
+
+        const staging_buffer = try ctx.device.createBuffer(&.{
+            .size = size,
+            .usage = .{ .transfer_src_bit = true },
+            .sharing_mode = .exclusive,
+        }, null);
+        defer ctx.device.destroyBuffer(staging_buffer, null);
+        const staging_mem_reqs = ctx.device.getBufferMemoryRequirements(staging_buffer);
+        const staging_memory = try ctx.allocate(staging_mem_reqs, .{
+            .host_visible_bit = true,
+            .host_coherent_bit = true,
+        });
+        defer ctx.device.freeMemory(staging_memory, null);
+        try ctx.device.bindBufferMemory(staging_buffer, staging_memory, 0);
+
+        {
+            const data = try ctx.device.mapMemory(staging_memory, 0, vk.WHOLE_SIZE, .{});
+            defer ctx.device.unmapMemory(staging_memory);
+
+            const gpu_vertices: [*]E = @ptrCast(@alignCast(data));
+            @memcpy(gpu_vertices[0..slice.len], slice);
+        }
+
+        try copyBufferToImage(
+            ctx,
+            &ctx.device,
+            pool,
+            staging_buffer,
+            this.image,
+            this.io.image_layout,
+            extent,
+        );
+
+        try this.transition(ctx, pool, .transfer_dst_optimal, v.layout, .{ .color_bit = true });
+
+        return this;
+    }
+
+    pub fn new(ctx: *VulkanContext, pool: vk.CommandPool, v: Args) !@This() {
         const device = &ctx.device;
 
         const img = try device.createImage(&.{
@@ -477,7 +612,7 @@ pub const Image = struct {
             .mip_levels = 1,
             .array_layers = 1,
             .samples = .{ .@"1_bit" = true },
-            .tiling = .optimal,
+            .tiling = v.tiling,
             .usage = v.usage,
             .sharing_mode = .exclusive,
             .initial_layout = .undefined,
@@ -529,7 +664,7 @@ pub const Image = struct {
         }, null);
         errdefer device.destroySampler(sampler, null);
 
-        return .{
+        var this = @This(){
             .image = img,
             .memory = memory,
             .view = view,
@@ -537,15 +672,19 @@ pub const Image = struct {
             .sampler = sampler,
             .extent = v.extent,
             .format = v.format,
+            .bind_desc_type = v.bind_desc_type,
             .io = .{
                 .sampler = sampler,
                 .image_view = view,
-                .image_layout = .general,
+                .image_layout = v.layout,
             },
         };
+
+        try this.transition(ctx, pool, .undefined, v.layout, v.view_aspect_mask);
+        return this;
     }
 
-    pub fn transition(self: *@This(), ctx: *Engine.VulkanContext, pool: vk.CommandPool, layout: vk.ImageLayout, new_layout: vk.ImageLayout) !void {
+    pub fn transition(self: *@This(), ctx: *VulkanContext, pool: vk.CommandPool, layout: vk.ImageLayout, new_layout: vk.ImageLayout, aspect_flags: vk.ImageAspectFlags) !void {
         const device = &ctx.device;
 
         var cmdbuf_handle: vk.CommandBuffer = undefined;
@@ -557,14 +696,15 @@ pub const Image = struct {
         defer device.freeCommandBuffers(pool, 1, @ptrCast(&cmdbuf_handle));
 
         // OOF: so you are saying i could have been using a nicer api all this time? :mous
-        const cmdbuf = Engine.VulkanContext.Api.CommandBuffer.init(cmdbuf_handle, device.wrapper);
+        const cmdbuf = engine_mod.VulkanContext.Api.CommandBuffer.init(cmdbuf_handle, device.wrapper);
 
         try cmdbuf.beginCommandBuffer(&.{
             .flags = .{ .one_time_submit_bit = true },
         });
 
         {
-            transitionImage(cmdbuf.handle, device, self.image, layout, new_layout, ctx.graphics_queue.family);
+            transitionImage(cmdbuf.handle, device, self.image, layout, new_layout, ctx.graphics_queue.family, aspect_flags);
+            self.io.image_layout = new_layout;
         }
 
         try cmdbuf.endCommandBuffer();
@@ -578,7 +718,7 @@ pub const Image = struct {
         try device.queueWaitIdle(ctx.graphics_queue.handle);
     }
 
-    pub fn copy_to_host(self: *@This(), ctx: *Engine.VulkanContext, pool: vk.CommandPool, copy_extent: vk.Extent3D) ![]align(8) u8 {
+    pub fn copy_to_host(self: *@This(), ctx: *VulkanContext, pool: vk.CommandPool, copy_extent: vk.Extent3D) ![]align(8) u8 {
         const unit_size: usize = switch (self.format) {
             .r16g16b16a16_sfloat => 4 * 2,
             .r8g8b8a8_srgb => 4,
@@ -592,7 +732,10 @@ pub const Image = struct {
         }, null);
         defer ctx.device.destroyBuffer(staging_buffer, null);
         const staging_mem_reqs = ctx.device.getBufferMemoryRequirements(staging_buffer);
-        const staging_memory = try ctx.allocate(staging_mem_reqs, .{ .host_visible_bit = true, .host_coherent_bit = true });
+        const staging_memory = try ctx.allocate(staging_mem_reqs, .{
+            .host_visible_bit = true,
+            .host_coherent_bit = true,
+        });
         defer ctx.device.freeMemory(staging_memory, null);
         try ctx.device.bindBufferMemory(staging_buffer, staging_memory, 0);
 
@@ -619,14 +762,15 @@ pub const Image = struct {
         device.destroySampler(self.sampler, null);
     }
 
+    // i don't think this works unless image memory is linear. totally not what i want.
     pub fn buffer(self: *@This(), device: *Device, v: struct {
         usage: vk.BufferUsageFlags = .{},
     }) !BufferView {
         const buf = try device.createBuffer(&.{
             .size = self.size,
-            .usage = (vk.BufferUsageFlags{
+            .usage = v.usage.merge(.{
                 .storage_buffer_bit = true,
-            }).merge(v.usage),
+            }),
             .sharing_mode = .exclusive,
         }, null);
         errdefer device.destroyBuffer(buf, null);
@@ -644,113 +788,31 @@ pub const Image = struct {
         } };
     }
 
-    pub fn layout_binding(_: *@This(), index: u32) vk.DescriptorSetLayoutBinding {
-        return .{
-            .binding = index,
-            .descriptor_type = .storage_image,
+    pub fn layout_binding(self: *@This(), binding: u32) [1]vk.DescriptorSetLayoutBinding {
+        return [_]vk.DescriptorSetLayoutBinding{.{
+            .binding = binding,
+            .descriptor_type = self.bind_desc_type,
             .descriptor_count = 1,
             .stage_flags = .{
                 .vertex_bit = true,
                 .fragment_bit = true,
                 .compute_bit = true,
             },
-        };
+        }};
     }
 
-    pub fn write_desc_set(self: *@This(), binding: u32, desc_set: vk.DescriptorSet) vk.WriteDescriptorSet {
-        return .{
-            .dst_set = desc_set,
+    pub fn write_desc_set(self: *@This(), binding: u32) [1]vk.WriteDescriptorSet {
+        return [_]vk.WriteDescriptorSet{.{
+            .dst_set = undefined,
             .dst_binding = binding,
             .dst_array_element = 0,
             .descriptor_count = 1,
-            .descriptor_type = .storage_image,
+            .descriptor_type = self.bind_desc_type,
             .p_image_info = @ptrCast(&self.io),
             // OOF: ??
             .p_buffer_info = undefined,
             .p_texel_buffer_view = undefined,
-        };
-    }
-};
-
-pub const UniformBuffer = struct {
-    // not owned
-    uniform_buffer: []u8,
-    buffer: vk.Buffer,
-    memory: vk.DeviceMemory,
-    dbi: vk.DescriptorBufferInfo,
-
-    pub fn new(uniforms: []u8, ctx: *Engine.VulkanContext) !@This() {
-        const device = &ctx.device;
-
-        const buffer = try device.createBuffer(&.{
-            .size = uniforms.len,
-            .usage = .{
-                .uniform_buffer_bit = true,
-            },
-            .sharing_mode = .exclusive,
-        }, null);
-        errdefer device.destroyBuffer(buffer, null);
-        const mem_req = device.getBufferMemoryRequirements(buffer);
-        const memory = try ctx.allocate(mem_req, .{
-            .host_visible_bit = true,
-            .host_coherent_bit = true,
-        });
-        errdefer device.freeMemory(memory, null);
-        try device.bindBufferMemory(buffer, memory, 0);
-
-        return .{
-            .uniform_buffer = uniforms,
-            .buffer = buffer,
-            .memory = memory,
-            .dbi = .{
-                .buffer = buffer,
-                .offset = 0,
-                .range = vk.WHOLE_SIZE,
-            },
-        };
-    }
-
-    pub fn deinit(self: *@This(), device: *Device) void {
-        device.destroyBuffer(self.buffer, null);
-        device.freeMemory(self.memory, null);
-
-        // not owned
-        // allocator.free(self.uniform_buffer);
-    }
-
-    pub fn upload(self: *@This(), device: *Device) !void {
-        const maybe_mapped = try device.mapMemory(self.memory, 0, self.uniform_buffer.len, .{});
-        const mapped = maybe_mapped orelse return error.MappingMemoryFailed;
-        defer device.unmapMemory(self.memory);
-
-        @memcpy(@as([*]u8, @ptrCast(mapped)), self.uniform_buffer);
-    }
-
-    pub fn layout_binding(_: *@This(), index: u32) vk.DescriptorSetLayoutBinding {
-        return .{
-            .binding = index,
-            .descriptor_type = .uniform_buffer,
-            .descriptor_count = 1,
-            .stage_flags = .{
-                .vertex_bit = true,
-                .fragment_bit = true,
-                .compute_bit = true,
-            },
-        };
-    }
-
-    pub fn write_desc_set(self: *@This(), binding: u32, desc_set: vk.DescriptorSet) vk.WriteDescriptorSet {
-        return .{
-            .dst_set = desc_set,
-            .dst_binding = binding,
-            .dst_array_element = 0,
-            .descriptor_count = 1,
-            .descriptor_type = .uniform_buffer,
-            .p_buffer_info = @ptrCast(&self.dbi),
-            // OOF: ??
-            .p_image_info = undefined,
-            .p_texel_buffer_view = undefined,
-        };
+        }};
     }
 };
 
@@ -758,28 +820,40 @@ pub const Buffer = struct {
     buffer: vk.Buffer,
     memory: vk.DeviceMemory,
     dbi: vk.DescriptorBufferInfo,
+    desc_type: vk.DescriptorType,
 
-    const Args = struct {
+    pub const Args = struct {
         size: u64,
         usage: vk.BufferUsageFlags = .{},
+        // TODO: don't use staging buffer to init if it can be avoided
+        memory_type: vk.MemoryPropertyFlags = .{ .device_local_bit = true },
+        desc_type: vk.DescriptorType = .storage_buffer,
     };
 
-    pub fn new_initialized(ctx: *Engine.VulkanContext, v: Args, val: anytype, pool: vk.CommandPool) !@This() {
+    pub fn new_initialized(ctx: *VulkanContext, v: Args, val: anytype, pool: vk.CommandPool) !@This() {
+        const E = @TypeOf(val);
+        const size = v.size * @sizeOf(E);
         const this = try @This().new(
             ctx,
-            .{ .size = v.size, .usage = v.usage.merge(.{
-                .transfer_dst_bit = true,
-            }) },
+            .{
+                .size = size,
+                .usage = v.usage.merge(.{ .transfer_dst_bit = true }),
+                .memory_type = v.memory_type,
+                .desc_type = v.desc_type,
+            },
         );
 
         const staging_buffer = try ctx.device.createBuffer(&.{
-            .size = v.size,
+            .size = size,
             .usage = .{ .transfer_src_bit = true },
             .sharing_mode = .exclusive,
         }, null);
         defer ctx.device.destroyBuffer(staging_buffer, null);
         const staging_mem_reqs = ctx.device.getBufferMemoryRequirements(staging_buffer);
-        const staging_memory = try ctx.allocate(staging_mem_reqs, .{ .host_visible_bit = true, .host_coherent_bit = true });
+        const staging_memory = try ctx.allocate(staging_mem_reqs, .{
+            .host_visible_bit = true,
+            .host_coherent_bit = true,
+        });
         defer ctx.device.freeMemory(staging_memory, null);
         try ctx.device.bindBufferMemory(staging_buffer, staging_memory, 0);
 
@@ -787,8 +861,8 @@ pub const Buffer = struct {
             const data = try ctx.device.mapMemory(staging_memory, 0, vk.WHOLE_SIZE, .{});
             defer ctx.device.unmapMemory(staging_memory);
 
-            const gpu_vertices: [*]@TypeOf(val) = @ptrCast(@alignCast(data));
-            @memset(gpu_vertices[0 .. v.size / @as(u64, @sizeOf(@TypeOf(val)))], val);
+            const gpu_vertices: [*]E = @ptrCast(@alignCast(data));
+            @memset(gpu_vertices[0..v.size], val);
         }
 
         try copyBuffer(ctx, &ctx.device, pool, this.buffer, staging_buffer, v.size);
@@ -796,20 +870,64 @@ pub const Buffer = struct {
         return this;
     }
 
-    pub fn new(ctx: *Engine.VulkanContext, v: Args) !@This() {
+    pub fn new_from_slice(ctx: *VulkanContext, v: struct {
+        usage: vk.BufferUsageFlags = .{},
+        memory_type: vk.MemoryPropertyFlags = .{ .device_local_bit = true },
+        desc_type: vk.DescriptorType = .storage_buffer,
+    }, slice: anytype, pool: vk.CommandPool) !@This() {
+        const S = @TypeOf(slice);
+        const E = std.meta.Elem(S);
+
+        const size = slice.len * @sizeOf(E);
+        const this = try @This().new(
+            ctx,
+            .{
+                .size = @intCast(size),
+                .usage = v.usage.merge(.{ .transfer_dst_bit = true }),
+                .memory_type = v.memory_type,
+                .desc_type = v.desc_type,
+            },
+        );
+
+        const staging_buffer = try ctx.device.createBuffer(&.{
+            .size = size,
+            .usage = .{ .transfer_src_bit = true },
+            .sharing_mode = .exclusive,
+        }, null);
+        defer ctx.device.destroyBuffer(staging_buffer, null);
+        const staging_mem_reqs = ctx.device.getBufferMemoryRequirements(staging_buffer);
+        const staging_memory = try ctx.allocate(staging_mem_reqs, .{
+            .host_visible_bit = true,
+            .host_coherent_bit = true,
+        });
+        defer ctx.device.freeMemory(staging_memory, null);
+        try ctx.device.bindBufferMemory(staging_buffer, staging_memory, 0);
+
+        {
+            const data = try ctx.device.mapMemory(staging_memory, 0, vk.WHOLE_SIZE, .{});
+            defer ctx.device.unmapMemory(staging_memory);
+
+            const gpu_vertices: [*]E = @ptrCast(@alignCast(data));
+            @memcpy(gpu_vertices[0..slice.len], slice);
+        }
+
+        try copyBuffer(ctx, &ctx.device, pool, this.buffer, staging_buffer, size);
+
+        return this;
+    }
+
+    pub fn new(ctx: *VulkanContext, v: Args) !@This() {
         const device = &ctx.device;
 
         const buffer = try device.createBuffer(&.{
             .size = v.size,
-            .usage = (vk.BufferUsageFlags{
-                .storage_buffer_bit = true,
-            }).merge(v.usage),
+            .usage = v.usage,
             .sharing_mode = .exclusive,
         }, null);
         errdefer device.destroyBuffer(buffer, null);
 
         const mem_reqs = device.getBufferMemoryRequirements(buffer);
-        const memory = try ctx.allocate(mem_reqs, .{ .device_local_bit = true });
+        const memory = try ctx.allocate(mem_reqs, v.memory_type);
         errdefer device.freeMemory(memory, null);
         try device.bindBufferMemory(buffer, memory, 0);
 
@@ -821,6 +939,7 @@ pub const Buffer = struct {
                 .offset = 0,
                 .range = vk.WHOLE_SIZE,
             },
+            .desc_type = v.desc_type,
         };
     }
 
@@ -829,31 +948,33 @@ pub const Buffer = struct {
         device.freeMemory(self.memory, null);
     }
 
-    pub fn layout_binding(_: *@This(), index: u32) vk.DescriptorSetLayoutBinding {
-        return .{
-            .binding = index,
-            .descriptor_type = .storage_buffer,
+    pub fn layout_binding(self: *@This(), binding: u32) [1]vk.DescriptorSetLayoutBinding {
+        return [_]vk.DescriptorSetLayoutBinding{.{
+            .binding = binding,
+
+            .descriptor_type = self.desc_type,
             .descriptor_count = 1,
             .stage_flags = .{
                 .vertex_bit = true,
                 .fragment_bit = true,
                 .compute_bit = true,
             },
-        };
+        }};
     }
 
-    pub fn write_desc_set(self: *@This(), binding: u32, desc_set: vk.DescriptorSet) vk.WriteDescriptorSet {
-        return .{
-            .dst_set = desc_set,
+    pub fn write_desc_set(self: *@This(), binding: u32) [1]vk.WriteDescriptorSet {
+        return [_]vk.WriteDescriptorSet{.{
+            .dst_set = undefined,
             .dst_binding = binding,
+
             .dst_array_element = 0,
             .descriptor_count = 1,
-            .descriptor_type = .storage_buffer,
+            .descriptor_type = self.desc_type,
             .p_buffer_info = @ptrCast(&self.dbi),
             // OOF: ??
             .p_image_info = undefined,
             .p_texel_buffer_view = undefined,
-        };
+        }};
     }
 };
 
@@ -901,12 +1022,13 @@ pub const CmdBuffer = struct {
 
     pub fn memBarrier(self: *@This(), device: *Device, v: struct {
         src: vk.PipelineStageFlags = .{
-            .compute_shader_bit = true,
+            .all_commands_bit = true,
         },
         dst: vk.PipelineStageFlags = .{
-            .compute_shader_bit = true,
+            .all_commands_bit = true,
         },
     }) void {
+        // - [Vulkan Synchronization](https://youtu.be/GiKbGWI4M-Y?si=1Ya1zseAnDnJ1RCf&t=2046)
         for (self.bufs) |cmdbuf| {
             device.cmdPipelineBarrier(cmdbuf, v.src, v.dst, .{}, 1, &[_]vk.MemoryBarrier{.{
                 .src_access_mask = .{
@@ -999,46 +1121,168 @@ pub const CmdBuffer = struct {
             }, .@"inline");
 
             device.cmdBindPipeline(cmdbuf, .graphics, v.pipeline.pipeline);
-            device.cmdBindDescriptorSets(cmdbuf, .graphics, v.pipeline.layout, 0, 1, @ptrCast(&v.desc_set), 0, null);
+            device.cmdBindDescriptorSets(
+                cmdbuf,
+                .graphics,
+                v.pipeline.layout,
+                0,
+                1,
+                @ptrCast(&v.desc_set),
+                0,
+                null,
+            );
             device.cmdDraw(cmdbuf, 6, 1, 0, 0);
 
             device.cmdEndRenderPass(cmdbuf);
         }
     }
 
-    pub fn bindCompute(self: *@This(), device: *Device, v: struct {
-        pipeline: ComputePipeline,
-        desc_set: vk.DescriptorSet,
+    pub fn dynamic_render_begin(self: *@This(), device: *Device, v: struct {
+        image: vk.ImageView,
+        depth: vk.ImageView,
+        extent: vk.Extent2D,
     }) void {
+        const viewport = vk.Viewport{
+            .x = 0,
+            .y = 0,
+            .width = @floatFromInt(v.extent.width),
+            .height = @floatFromInt(v.extent.height),
+            .min_depth = 0,
+            .max_depth = 1,
+        };
+        const scissor = vk.Rect2D{
+            .offset = .{ .x = 0, .y = 0 },
+            .extent = v.extent,
+        };
         for (self.bufs) |cmdbuf| {
-            device.cmdBindPipeline(cmdbuf, .compute, v.pipeline.pipeline);
-            device.cmdBindDescriptorSets(cmdbuf, .compute, v.pipeline.layout, 0, 1, @ptrCast(&v.desc_set), 0, null);
+            device.cmdSetViewport(cmdbuf, 0, 1, @ptrCast(&viewport));
+            device.cmdSetScissor(cmdbuf, 0, 1, @ptrCast(&scissor));
+            device.cmdBeginRenderingKHR(cmdbuf, &vk.RenderingInfoKHR{
+                .render_area = .{
+                    .offset = .{ .x = 0, .y = 0 },
+                    .extent = v.extent,
+                },
+                .layer_count = 1,
+                .view_mask = 0,
+                .color_attachment_count = 1,
+                .p_color_attachments = &[_]vk.RenderingAttachmentInfoKHR{vk.RenderingAttachmentInfoKHR{
+                    .image_view = v.image,
+                    .image_layout = .color_attachment_optimal,
+                    .resolve_mode = .{},
+                    .resolve_image_layout = .undefined,
+                    .load_op = .clear,
+                    .store_op = .store,
+                    .clear_value = .{ .color = .{ .float_32 = .{ 0, 0, 0, 0 } } },
+                }},
+                .p_depth_attachment = &vk.RenderingAttachmentInfoKHR{
+                    .image_view = v.depth,
+                    .image_layout = .depth_stencil_attachment_optimal,
+                    .resolve_mode = .{},
+                    .resolve_image_layout = .undefined,
+                    .load_op = .clear,
+                    .store_op = .store,
+                    .clear_value = .{ .depth_stencil = .{ .depth = 1.0, .stencil = 0 } },
+                },
+                // .p_stencil_attachment: ?*const RenderingAttachmentInfo = null,
+            });
         }
     }
 
-    pub fn transitionImg(self: *@This(), device: *Device, v: struct {
+    pub fn dynamic_render_end(self: *@This(), device: *Device) void {
+        for (self.bufs) |cmdbuf| {
+            device.cmdEndRenderingKHR(cmdbuf);
+        }
+    }
+
+    pub fn draw_indirect(
+        self: *@This(),
+        device: *Device,
+        v: struct {
+            pipeline: *const GraphicsPipeline,
+            desc_sets: []const vk.DescriptorSet,
+            offsets: []const u32 = &.{},
+            calls: struct {
+                buffer: vk.Buffer,
+                count: u32,
+                stride: u32,
+                offset: u32 = 0,
+            },
+            push_constants: []const u8 = &.{},
+        },
+    ) void {
+        for (self.bufs) |cmdbuf| {
+            device.cmdBindPipeline(cmdbuf, .graphics, v.pipeline.pipeline);
+            device.cmdBindDescriptorSets(
+                cmdbuf,
+                .graphics,
+                v.pipeline.layout,
+                0,
+                @intCast(v.desc_sets.len),
+                v.desc_sets.ptr,
+                @intCast(v.offsets.len),
+                v.offsets.ptr,
+            );
+            if (v.push_constants.len > 0) {
+                device.cmdPushConstants(
+                    cmdbuf,
+                    v.pipeline.layout,
+                    .{ .vertex_bit = true, .fragment_bit = true },
+                    0,
+                    @intCast(v.push_constants.len),
+                    @ptrCast(v.push_constants.ptr),
+                );
+            }
+            device.cmdDrawIndirect(
+                cmdbuf,
+                v.calls.buffer,
+                v.calls.offset,
+                v.calls.count,
+                v.calls.stride,
+            );
+
+            // TODO:
+            // - device.cmdDrawIndexedIndirectCount(command_buffer: CommandBuffer, buffer: Buffer, offset: DeviceSize, count_buffer: Buffer, count_buffer_offset: DeviceSize, max_draw_count: u32, stride: u32);
+            // - gpu culling.
+            //    - a buffer to store visibility. a compute shader stores 1 / 0 for visible/invisible instances.
+            //    - compute sum in a compute buffer using technique from eyeface
+            //    - use drawIndexedIndirectCount with 1 buffer, 2 offsets for count and draw call data.
+        }
+    }
+
+    pub fn bindCompute(self: *@This(), device: *Device, v: struct {
+        pipeline: ComputePipeline,
+        desc_sets: []const vk.DescriptorSet,
+    }) void {
+        for (self.bufs) |cmdbuf| {
+            device.cmdBindPipeline(cmdbuf, .compute, v.pipeline.pipeline);
+            device.cmdBindDescriptorSets(cmdbuf, .compute, v.pipeline.layout, 0, @intCast(v.desc_sets.len), v.desc_sets.ptr, 0, null);
+        }
+    }
+
+    pub fn transition_img(self: *@This(), device: *Device, v: struct {
         image: vk.Image,
         layout: vk.ImageLayout,
         new_layout: vk.ImageLayout,
         queue_family_index: u32,
+        aspect_mask: vk.ImageAspectFlags,
     }) void {
         for (self.bufs) |cmdbuf| {
-            transitionImage(cmdbuf, device, v.image, v.layout, v.new_layout, v.queue_family_index);
+            transitionImage(cmdbuf, device, v.image, v.layout, v.new_layout, v.queue_family_index, v.aspect_mask);
         }
     }
 
-    pub fn transitionSwapchain(self: *@This(), device: *Device, v: struct {
+    pub fn transition_swapchain(self: *@This(), device: *Device, v: struct {
         layout: vk.ImageLayout,
         new_layout: vk.ImageLayout,
         queue_family_index: u32,
         swapchain: *const Swapchain,
     }) void {
         for (self.bufs, v.swapchain.swap_images) |cmdbuf, img| {
-            transitionImage(cmdbuf, device, img.image, v.layout, v.new_layout, v.queue_family_index);
+            transitionImage(cmdbuf, device, img.image, v.layout, v.new_layout, v.queue_family_index, .{ .color_bit = true });
         }
     }
 
-    pub fn blitIntoImage(self: *@This(), device: *Device, v: struct {
+    pub fn blit_into_image(self: *@This(), device: *Device, v: struct {
         typ: vk.ImageAspectFlags = .{ .color_bit = true },
         image: vk.Image,
         size: vk.Extent2D,
@@ -1083,7 +1327,7 @@ pub const CmdBuffer = struct {
         }
     }
 
-    pub fn blitIntoSwapchain(self: *@This(), device: *Device, v: struct {
+    pub fn blit_into_swapchain(self: *@This(), device: *Device, v: struct {
         typ: vk.ImageAspectFlags = .{ .color_bit = true },
         image: vk.Image,
         size: vk.Extent2D,
@@ -1126,7 +1370,7 @@ pub const CmdBuffer = struct {
         }
     }
 
-    pub fn drawIntoSwapchain(self: *@This(), device: *Device, v: struct {
+    pub fn draw_into_swapchain(self: *@This(), device: *Device, v: struct {
         typ: vk.ImageAspectFlags = .{ .color_bit = true },
         image: vk.Image,
         image_layout: vk.ImageLayout,
@@ -1134,41 +1378,43 @@ pub const CmdBuffer = struct {
         swapchain: *const Swapchain,
         queue_family: u32,
     }) void {
-        self.transitionImg(device, .{
+        self.transition_img(device, .{
             .image = v.image,
             .layout = v.image_layout,
             .new_layout = .transfer_src_optimal,
             .queue_family_index = v.queue_family,
+            .aspect_mask = v.typ,
         });
 
-        self.transitionSwapchain(device, .{
+        self.transition_swapchain(device, .{
             .layout = .undefined,
             .new_layout = .transfer_dst_optimal,
             .queue_family_index = v.queue_family,
             .swapchain = v.swapchain,
         });
-        self.blitIntoSwapchain(device, .{
+        self.blit_into_swapchain(device, .{
             .typ = v.typ,
             .image = v.image,
             .size = v.swapchain.extent,
             .swapchain = v.swapchain,
         });
-        self.transitionSwapchain(device, .{
+        self.transition_swapchain(device, .{
             .layout = .transfer_dst_optimal,
             .new_layout = .color_attachment_optimal,
             .queue_family_index = v.queue_family,
             .swapchain = v.swapchain,
         });
 
-        self.transitionImg(device, .{
+        self.transition_img(device, .{
             .image = v.image,
             .layout = .transfer_src_optimal,
             .new_layout = v.image_layout,
             .queue_family_index = v.queue_family,
+            .aspect_mask = v.typ,
         });
     }
 
-    pub fn drawIntoImage(self: *@This(), device: *Device, v: struct {
+    pub fn draw_into_image(self: *@This(), device: *Device, v: struct {
         typ: vk.ImageAspectFlags = .{ .color_bit = true },
         image: vk.Image,
         image_layout: vk.ImageLayout,
@@ -1178,34 +1424,34 @@ pub const CmdBuffer = struct {
         target_size: vk.Extent2D,
         queue_family: u32,
     }) void {
-        self.transitionImg(device, .{
+        self.transition_img(device, .{
             .image = v.image,
             .layout = v.image_layout,
             .new_layout = .transfer_src_optimal,
             .queue_family_index = v.queue_family,
         });
 
-        self.transitionImg(device, .{
+        self.transition_img(device, .{
             .image = v.target_image,
             .layout = v.target_image_layout,
             .new_layout = .transfer_dst_optimal,
             .queue_family_index = v.queue_family,
         });
-        self.blitIntoImage(device, .{
+        self.blit_into_image(device, .{
             .typ = v.typ,
             .image = v.image,
             .size = v.size,
             .target_image = v.target_image,
             .target_size = v.target_size,
         });
-        self.transitionImg(device, .{
+        self.transition_img(device, .{
             .image = v.target_image,
             .layout = .transfer_dst_optimal,
             .new_layout = v.target_image_layout,
             .queue_family_index = v.queue_family,
         });
 
-        self.transitionImg(device, .{
+        self.transition_img(device, .{
             .image = v.image,
             .layout = .transfer_src_optimal,
             .new_layout = v.image_layout,
@@ -1216,6 +1462,19 @@ pub const CmdBuffer = struct {
     pub fn dispatch(self: *@This(), device: *Device, v: struct { x: u32, y: u32 = 1, z: u32 = 1 }) void {
         for (self.bufs) |cmdbuf| {
             device.cmdDispatch(cmdbuf, v.x, v.y, v.z);
+        }
+    }
+
+    pub fn push_constants(self: *@This(), device: *Device, pipeline_layout: vk.PipelineLayout, constants: []const u8, flags: vk.ShaderStageFlags) void {
+        for (self.bufs) |cmdbuf| {
+            device.cmdPushConstants(
+                cmdbuf,
+                pipeline_layout,
+                flags,
+                0,
+                @intCast(constants.len),
+                @ptrCast(constants.ptr),
+            );
         }
     }
 };
@@ -1268,6 +1527,16 @@ pub const Swapchain = struct {
     image_index: u32,
     next_image_acquired: vk.Semaphore,
 
+    // - [Vulkan Synchronization](https://www.youtube.com/watch?v=GiKbGWI4M-Y)
+    timeline_semaphore: vk.Semaphore,
+    frame: u64 = 0,
+
+    const FrameStage = enum(u64) {
+        submit = 0,
+
+        const count = std.meta.fields(@This()).len;
+    };
+
     pub const PresentState = enum {
         optimal,
         suboptimal,
@@ -1277,11 +1546,11 @@ pub const Swapchain = struct {
         prefer_present_mode: ?vk.PresentModeKHR = null,
     };
 
-    pub fn init(ctx: *Engine.VulkanContext, extent: vk.Extent2D, args: Args) !Swapchain {
+    pub fn init(ctx: *VulkanContext, extent: vk.Extent2D, args: Args) !Swapchain {
         return try initRecycle(ctx, .null_handle, extent, args);
     }
 
-    pub fn initRecycle(ctx: *Engine.VulkanContext, old_handle: vk.SwapchainKHR, extent: vk.Extent2D, args: Args) !Swapchain {
+    pub fn initRecycle(ctx: *VulkanContext, old_handle: vk.SwapchainKHR, extent: vk.Extent2D, args: Args) !Swapchain {
         const caps = try ctx.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(ctx.pdev, ctx.surface);
         const actual_extent = blk: {
             if (caps.current_extent.width != 0xFFFF_FFFF) {
@@ -1319,7 +1588,7 @@ pub const Swapchain = struct {
                 .color_space = .srgb_nonlinear_khr,
             };
 
-            const surface_formats = try ctx.instance.getPhysicalDeviceSurfaceFormatsAllocKHR(ctx.pdev, ctx.surface, allocator);
+            const surface_formats = try ctx.instance.getPhysicalDeviceSurfaceFormatsAllocKHR(ctx.pdev, ctx.surface, allocator.*);
             defer allocator.free(surface_formats);
 
             for (surface_formats) |sfmt| {
@@ -1331,7 +1600,7 @@ pub const Swapchain = struct {
             break :blk surface_formats[0]; // There must always be at least one supported surface format
         };
         const present_mode = blk: {
-            const present_modes = try ctx.instance.getPhysicalDeviceSurfacePresentModesAllocKHR(ctx.pdev, ctx.surface, allocator);
+            const present_modes = try ctx.instance.getPhysicalDeviceSurfacePresentModesAllocKHR(ctx.pdev, ctx.surface, allocator.*);
             defer allocator.free(present_modes);
 
             if (args.prefer_present_mode) |mode| {
@@ -1390,14 +1659,14 @@ pub const Swapchain = struct {
         }
 
         const swap_images = blk: {
-            const images = try ctx.device.getSwapchainImagesAllocKHR(handle, allocator);
+            const images = try ctx.device.getSwapchainImagesAllocKHR(handle, allocator.*);
             defer allocator.free(images);
 
             const swap_images = try allocator.alloc(SwapImage, images.len);
             errdefer allocator.free(swap_images);
 
             var i: usize = 0;
-            errdefer for (swap_images[0..i]) |si| si.deinit(&ctx.device);
+            errdefer for (swap_images[0..i]) |si| si.deinit(&ctx.device, null);
             for (images) |image| {
                 swap_images[i] = try SwapImage.init(&ctx.device, image, surface_format.format);
                 i += 1;
@@ -1406,7 +1675,7 @@ pub const Swapchain = struct {
             break :blk swap_images;
         };
         errdefer {
-            for (swap_images) |si| si.deinit(&ctx.device);
+            for (swap_images) |si| si.deinit(&ctx.device, null);
             allocator.free(swap_images);
         }
 
@@ -1419,7 +1688,17 @@ pub const Swapchain = struct {
         }
 
         std.mem.swap(vk.Semaphore, &swap_images[result.image_index].image_acquired, &next_image_acquired);
+
+        const typ = vk.SemaphoreTypeCreateInfo{
+            .semaphore_type = .timeline,
+            .initial_value = 0,
+        };
+        const semaphore = try ctx.device.createSemaphore(&vk.SemaphoreCreateInfo{
+            .p_next = @ptrCast(&typ),
+        }, null);
+        errdefer ctx.device.destroySemaphore(semaphore, null);
         return Swapchain{
+            .timeline_semaphore = semaphore,
             .surface_format = surface_format,
             .present_mode = present_mode,
             .extent = actual_extent,
@@ -1430,38 +1709,59 @@ pub const Swapchain = struct {
         };
     }
 
-    fn deinitExceptSwapchain(self: Swapchain, device: *Engine.VulkanContext.Api.Device) void {
-        for (self.swap_images) |si| si.deinit(device);
+    fn deinitExceptSwapchain(self: *@This(), device: *VulkanContext.Api.Device) void {
+        for (self.swap_images) |si| si.deinit(device, self);
         allocator.free(self.swap_images);
         device.destroySemaphore(self.next_image_acquired, null);
+        device.destroySemaphore(self.timeline_semaphore, null);
     }
 
-    pub fn waitForAllFences(self: Swapchain, device: *Engine.VulkanContext.Api.Device) !void {
-        for (self.swap_images) |si| si.waitForFence(device) catch {};
+    pub fn timeline_wait(self: *@This(), device: *Device, val: u64) !void {
+        const res = try device.waitSemaphores(&vk.SemaphoreWaitInfo{
+            .semaphore_count = 1,
+            .p_semaphores = @ptrCast(&self.timeline_semaphore),
+            .p_values = @ptrCast(&val),
+        }, std.math.maxInt(u64));
+
+        switch (res) {
+            .success => return,
+            .not_ready => return error.TimelineSemaphoreNotReady,
+            .timeout => return error.TimelineSemaphoreTimeout,
+            .event_set => return error.TimelineSemaphoreEventSet,
+            .event_reset => return error.TimelineSemaphoreEventReset,
+            .incomplete => return error.TimelineSemaphoreIncomplete,
+            else => {
+                std.debug.print("{any}", .{res});
+                return error.TimelineSemaphoreUnknownError;
+            },
+        }
     }
 
-    pub fn deinit(self: Swapchain, device: *Engine.VulkanContext.Api.Device) void {
+    pub fn timeline_signal(self: *@This(), device: *Device, val: u64) !void {
+        try device.signalSemaphore(&vk.SemaphoreSignalInfo{
+            .semaphore = self.timeline_semaphore,
+            .value = val,
+        });
+    }
+
+    pub fn waitForAll(self: *@This(), device: *VulkanContext.Api.Device) !void {
+        for (self.swap_images) |si| self.timeline_wait(device, si.submit_stage) catch {};
+    }
+
+    pub fn deinit(self: *@This(), device: *VulkanContext.Api.Device) void {
         self.deinitExceptSwapchain(device);
         device.destroySwapchainKHR(self.handle, null);
     }
 
-    pub fn recreate(self: *Swapchain, ctx: *Engine.VulkanContext, new_extent: vk.Extent2D, args: Args) !void {
+    pub fn recreate(self: *@This(), ctx: *VulkanContext, new_extent: vk.Extent2D, args: Args) !void {
         const old_handle = self.handle;
-        self.deinitExceptSwapchain();
+        self.deinitExceptSwapchain(&ctx.device);
         self.* = try initRecycle(ctx, old_handle, new_extent, .{
             .prefer_present_mode = args.prefer_present_mode orelse self.present_mode,
         });
     }
 
-    pub fn currentImage(self: Swapchain) vk.Image {
-        return self.swap_images[self.image_index].image;
-    }
-
-    pub fn currentSwapImage(self: Swapchain) *const SwapImage {
-        return &self.swap_images[self.image_index];
-    }
-
-    pub fn present(self: *Swapchain, cmdbufs: []const vk.CommandBuffer, ctx: *Engine.VulkanContext, uniforms: anytype) !PresentState {
+    pub fn present_start(self: *Swapchain, ctx: *VulkanContext) !void {
         // Simple method:
         // 1) Acquire next image
         // 2) Wait for and reset fence of the acquired image
@@ -1480,23 +1780,36 @@ pub const Swapchain = struct {
         // so we keep an extra auxilery semaphore that is swapped around
 
         // Step 1: Make sure the current frame has finished rendering
-        const current = self.currentSwapImage();
-        try current.waitForFence(&ctx.device);
-        try ctx.device.resetFences(1, @ptrCast(&current.frame_fence));
+        const current = &self.swap_images[self.image_index];
+        // wait on the gpu command buffers of the frame that was acquired at the end of the last frame.
+        try self.timeline_wait(&ctx.device, current.submit_stage);
+    }
 
-        try uniforms.upload(&ctx.device);
+    pub fn present_end(self: *Swapchain, cmdbufs: []const vk.CommandBuffer, ctx: *VulkanContext) !PresentState {
+        const current = &self.swap_images[self.image_index];
 
         // Step 2: Submit the command buffer
-        const wait_stage = [_]vk.PipelineStageFlags{.{ .top_of_pipe_bit = true }};
+        // TODO: this only needs to wait for the blit step where we write screen_buffer into swapchain.
+        //  so it's better to separate the blitting into another command buffer.
         try ctx.device.queueSubmit(ctx.graphics_queue.handle, 1, &[_]vk.SubmitInfo{.{
-            .wait_semaphore_count = 1,
-            .p_wait_semaphores = @ptrCast(&current.image_acquired),
-            .p_wait_dst_stage_mask = &wait_stage,
+            .p_next = @ptrCast(&vk.TimelineSemaphoreSubmitInfo{
+                .wait_semaphore_value_count = 2,
+                .p_wait_semaphore_values = &[_]u64{ 0, self.get_stage(0, .submit) },
+                .signal_semaphore_value_count = 2,
+                .p_signal_semaphore_values = &[_]u64{ 0, self.get_stage(1, .submit) },
+            }),
+            .wait_semaphore_count = 2,
+            .p_wait_semaphores = &[_]vk.Semaphore{ current.image_acquired, self.timeline_semaphore },
+            // length == number of wait semaphores
+            .p_wait_dst_stage_mask = &[_]vk.PipelineStageFlags{ .{ .top_of_pipe_bit = true }, .{ .top_of_pipe_bit = true } },
+
+            .signal_semaphore_count = 2,
+            .p_signal_semaphores = &[_]vk.Semaphore{ current.render_finished, self.timeline_semaphore },
+
             .command_buffer_count = @intCast(cmdbufs.len),
             .p_command_buffers = cmdbufs.ptr,
-            .signal_semaphore_count = 1,
-            .p_signal_semaphores = @ptrCast(&current.render_finished),
-        }}, current.frame_fence);
+        }}, .null_handle);
+        current.submit_stage = self.get_stage(1, .submit);
 
         // Step 3: Present the current frame
         _ = try ctx.device.queuePresentKHR(ctx.present_queue.handle, &.{
@@ -1508,6 +1821,15 @@ pub const Swapchain = struct {
         });
 
         // Step 4: Acquire next frame
+        // - [Vulkan® 1.4.317](https://registry.khronos.org/vulkan/specs/latest/html/vkspec.html#vkAcquireNextImageKHR)
+        // this does not block till the image is ready to be used, but here we can supply a fence/semaphore
+        // so that it can signal that when it is ready to be used.
+        // - [VK_KHR_swapchain(3)](https://registry.khronos.org/vulkan/specs/latest/man/html/VK_KHR_swapchain.html)
+        // - [Vulkan Lecture Series, Episode 2 - YouTube](https://youtu.be/nSzQcyQTtRY?si=owZn39Zbd51Fh9ew&t=1610)
+        //  it only waits for the image to become 'available'. we still have to wait for it to be usable by our commands
+        // now the gpu will signal this semaphore (which we will swap with current.image_acquired a few lines down)
+        // and we can wait for this acquire to be complete before we start executing this frame's command buffers
+        // by passing the semaphore in vk.SubmitInfo.p_wait_semaphores
         const result = try ctx.device.acquireNextImageKHR(
             self.handle,
             std.math.maxInt(u64),
@@ -1517,6 +1839,7 @@ pub const Swapchain = struct {
 
         std.mem.swap(vk.Semaphore, &self.swap_images[result.image_index].image_acquired, &self.next_image_acquired);
         self.image_index = result.image_index;
+        self.frame = self.get_stage(1, .submit);
 
         return switch (result.result) {
             .success => .optimal,
@@ -1525,14 +1848,19 @@ pub const Swapchain = struct {
         };
     }
 
+    pub fn get_stage(self: *@This(), frame_offset: i32, stage: FrameStage) u64 {
+        return cast(u64, (cast(i64, self.frame) + frame_offset) * cast(i64, FrameStage.count) + cast(i64, @intFromEnum(stage)));
+    }
+
     const SwapImage = struct {
         image: vk.Image,
         view: vk.ImageView,
+        // swapchain does not support timeline semaphores
         image_acquired: vk.Semaphore,
         render_finished: vk.Semaphore,
-        frame_fence: vk.Fence,
+        submit_stage: u64 = 0,
 
-        fn init(device: *Engine.VulkanContext.Api.Device, image: vk.Image, format: vk.Format) !SwapImage {
+        fn init(device: *VulkanContext.Api.Device, image: vk.Image, format: vk.Format) !SwapImage {
             const view = try device.createImageView(&.{
                 .image = image,
                 .view_type = .@"2d",
@@ -1554,28 +1882,19 @@ pub const Swapchain = struct {
             const render_finished = try device.createSemaphore(&.{}, null);
             errdefer device.destroySemaphore(render_finished, null);
 
-            const frame_fence = try device.createFence(&.{ .flags = .{ .signaled_bit = true } }, null);
-            errdefer device.destroyFence(frame_fence, null);
-
             return SwapImage{
                 .image = image,
                 .view = view,
                 .image_acquired = image_acquired,
                 .render_finished = render_finished,
-                .frame_fence = frame_fence,
             };
         }
 
-        fn deinit(self: SwapImage, device: *Engine.VulkanContext.Api.Device) void {
-            self.waitForFence(device) catch return;
+        fn deinit(self: SwapImage, device: *VulkanContext.Api.Device, chain: ?*Swapchain) void {
+            if (chain) |sc| sc.timeline_wait(device, self.submit_stage) catch return;
             device.destroyImageView(self.view, null);
             device.destroySemaphore(self.image_acquired, null);
             device.destroySemaphore(self.render_finished, null);
-            device.destroyFence(self.frame_fence, null);
-        }
-
-        fn waitForFence(self: SwapImage, device: *Engine.VulkanContext.Api.Device) !void {
-            _ = try device.waitForFences(1, @ptrCast(&self.frame_fence), vk.TRUE, std.math.maxInt(u64));
         }
     };
 };
@@ -1587,6 +1906,7 @@ pub fn transitionImage(
     layout: vk.ImageLayout,
     new_layout: vk.ImageLayout,
     queue_family_index: u32,
+    aspect_mask: vk.ImageAspectFlags,
 ) void {
     const image_barrier = [_]vk.ImageMemoryBarrier2{.{
         .src_stage_mask = .{ .all_commands_bit = true },
@@ -1599,7 +1919,7 @@ pub fn transitionImage(
         .old_layout = layout,
         .new_layout = new_layout,
         .subresource_range = .{
-            .aspect_mask = .{ .color_bit = true },
+            .aspect_mask = aspect_mask,
             .base_mip_level = 0,
             .level_count = 1,
             .base_array_layer = 0,
@@ -1617,7 +1937,7 @@ pub fn transitionImage(
 }
 
 pub fn copyBuffer(
-    ctx: *Engine.VulkanContext,
+    ctx: *VulkanContext,
     device: *Device,
     pool: vk.CommandPool,
     dst: vk.Buffer,
@@ -1632,7 +1952,7 @@ pub fn copyBuffer(
     }, @ptrCast(&cmdbuf_handle));
     defer device.freeCommandBuffers(pool, 1, @ptrCast(&cmdbuf_handle));
 
-    const cmdbuf = Engine.VulkanContext.Api.CommandBuffer.init(cmdbuf_handle, device.wrapper);
+    const cmdbuf = engine_mod.VulkanContext.Api.CommandBuffer.init(cmdbuf_handle, device.wrapper);
 
     try cmdbuf.beginCommandBuffer(&.{
         .flags = .{ .one_time_submit_bit = true },
@@ -1657,7 +1977,7 @@ pub fn copyBuffer(
 }
 
 pub fn copyImageToBuffer(
-    ctx: *Engine.VulkanContext,
+    ctx: *VulkanContext,
     device: *Device,
     pool: vk.CommandPool,
     src: vk.Image,
@@ -1673,13 +1993,13 @@ pub fn copyImageToBuffer(
     }, @ptrCast(&cmdbuf_handle));
     defer device.freeCommandBuffers(pool, 1, @ptrCast(&cmdbuf_handle));
 
-    const cmdbuf = Engine.VulkanContext.Api.CommandBuffer.init(cmdbuf_handle, device.wrapper);
+    const cmdbuf = VulkanContext.Api.CommandBuffer.init(cmdbuf_handle, device.wrapper);
 
     try cmdbuf.beginCommandBuffer(&.{
         .flags = .{ .one_time_submit_bit = true },
     });
 
-    const region = vk.BufferImageCopy{
+    const region = [_]vk.BufferImageCopy{.{
         .buffer_offset = 0,
         .buffer_row_length = extent.width,
         .buffer_image_height = extent.height,
@@ -1691,8 +2011,57 @@ pub fn copyImageToBuffer(
         },
         .image_offset = .{ .x = 0, .y = 0, .z = 0 },
         .image_extent = extent,
+    }};
+    cmdbuf.copyImageToBuffer(src, src_layout, dst, @intCast(region.len), &region);
+
+    try cmdbuf.endCommandBuffer();
+
+    const si = vk.SubmitInfo{
+        .command_buffer_count = 1,
+        .p_command_buffers = (&cmdbuf.handle)[0..1],
+        .p_wait_dst_stage_mask = undefined,
     };
-    cmdbuf.copyImageToBuffer(src, src_layout, dst, 1, @ptrCast(&region));
+    try device.queueSubmit(ctx.graphics_queue.handle, 1, @ptrCast(&si), .null_handle);
+    try device.queueWaitIdle(ctx.graphics_queue.handle);
+}
+
+pub fn copyBufferToImage(
+    ctx: *VulkanContext,
+    device: *Device,
+    pool: vk.CommandPool,
+    src: vk.Buffer,
+    dst: vk.Image,
+    dst_layout: vk.ImageLayout,
+    extent: vk.Extent3D,
+) !void {
+    var cmdbuf_handle: vk.CommandBuffer = undefined;
+    try device.allocateCommandBuffers(&.{
+        .command_pool = pool,
+        .level = .primary,
+        .command_buffer_count = 1,
+    }, @ptrCast(&cmdbuf_handle));
+    defer device.freeCommandBuffers(pool, 1, @ptrCast(&cmdbuf_handle));
+
+    const cmdbuf = VulkanContext.Api.CommandBuffer.init(cmdbuf_handle, device.wrapper);
+
+    try cmdbuf.beginCommandBuffer(&.{
+        .flags = .{ .one_time_submit_bit = true },
+    });
+
+    const region = [_]vk.BufferImageCopy{.{
+        .buffer_offset = 0,
+        .buffer_row_length = extent.width,
+        .buffer_image_height = extent.height,
+        .image_subresource = .{
+            .aspect_mask = .{ .color_bit = true },
+            .mip_level = 0,
+            .base_array_layer = 0,
+            .layer_count = 1,
+        },
+        .image_offset = .{ .x = 0, .y = 0, .z = 0 },
+        .image_extent = extent,
+    }};
+    cmdbuf.copyBufferToImage(src, dst, dst_layout, @intCast(region.len), &region);
 
     try cmdbuf.endCommandBuffer();
 
@@ -1707,50 +2076,63 @@ pub fn copyImageToBuffer(
 
 pub fn dump_image_to_file(
     image: *Image,
-    ctx: *Engine.VulkanContext,
+    ctx: *VulkanContext,
     pool: vk.CommandPool,
     copy_extent: vk.Extent2D,
-    path: []const u8,
+    _path: []const u8,
 ) !void {
-    const buf = try image.copy_to_host(ctx, pool, .{
-        .width = copy_extent.width,
-        .height = copy_extent.height,
-        .depth = 1,
-    });
+    const buf = blk: {
+        const old_layout = image.io.image_layout;
+        try image.transition(ctx, pool, old_layout, .transfer_src_optimal, .{ .color_bit = true });
+        defer image.transition(ctx, pool, .transfer_src_optimal, old_layout, .{ .color_bit = true }) catch {};
+        const buf = try image.copy_to_host(ctx, pool, .{
+            .width = copy_extent.width,
+            .height = copy_extent.height,
+            .depth = 1,
+        });
+        errdefer allocator.free(buf);
+
+        break :blk buf;
+    };
     defer allocator.free(buf);
 
-    const pixels = try allocator.alloc(f32, copy_extent.width * copy_extent.height * 4);
+    const pixels = try allocator.alloc(u8, copy_extent.width * copy_extent.height * 4);
     defer allocator.free(pixels);
 
     switch (image.format) {
         .r16g16b16a16_sfloat => {
             const src = std.mem.bytesAsSlice(f16, buf);
             for (src[0..pixels.len], 0..) |f, i| {
-                pixels[i] = @floatCast(f);
+                pixels[i] = @intFromFloat(std.math.clamp(f * 255.0, 0, 255));
             }
         },
         .r8g8b8a8_srgb => {
             const src = std.mem.bytesAsSlice(u8, buf);
             for (src[0..pixels.len], 0..) |f, i| {
-                pixels[i] = @as(f32, @floatFromInt(f)) / 255.0;
+                pixels[i] = f;
             }
         },
         else => return error.UnknownImageFormat,
     }
 
-    const blob = try utils.ImageMagick.encode_rgba_image(pixels, copy_extent.width, copy_extent.height);
+    const blob = try utils.StbImage.encode_rgba_image(pixels, copy_extent.width, copy_extent.height);
     defer allocator.free(blob);
 
     const ts = std.time.timestamp();
-    const filename = try std.fmt.allocPrint(allocator, "{d}.png", .{ts});
+    const filename = try std.fmt.allocPrint(allocator.*, "{d}.png", .{ts});
     defer allocator.free(filename);
 
-    try std.fs.cwd().makePath(path);
+    const path = try utils.fspath.cwd_join(allocator.*, _path);
+    defer allocator.free(path);
+    std.fs.makeDirAbsolute(path) catch |e| switch (e) {
+        error.PathAlreadyExists => {},
+        else => return e,
+    };
 
-    const joined_path = try std.fs.path.join(allocator, &[_][]const u8{ path, filename });
+    const joined_path = try std.fs.path.join(allocator.*, &[_][]const u8{ path, filename });
     defer allocator.free(joined_path);
 
-    const file = try std.fs.cwd().createFile(joined_path, .{});
+    const file = try std.fs.createFileAbsolute(joined_path, .{});
     defer file.close();
     try file.writeAll(blob);
 }

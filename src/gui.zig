@@ -5,8 +5,9 @@ const vk = @import("vulkan");
 const main = @import("main.zig");
 const allocator = main.allocator;
 
-const Engine = @import("engine.zig");
-const c = Engine.c;
+const engine_mod = @import("engine.zig");
+const Engine = engine_mod.Engine;
+const c = engine_mod.c;
 
 const math = @import("math.zig");
 const Vec4 = math.Vec4;
@@ -18,13 +19,13 @@ const Swapchain = render_utils.Swapchain;
 pub const GuiEngine = struct {
     ctx: *c.ImGuiContext,
 
-    const Device = Engine.VulkanContext.Api.Device;
+    const Device = engine_mod.VulkanContext.Api.Device;
 
     pub fn loader(name: [*c]const u8, instance: ?*anyopaque) callconv(.C) ?*const fn () callconv(.C) void {
         return c.glfwGetInstanceProcAddress(@ptrCast(instance), name);
     }
 
-    pub fn init(window: *Engine.Window) !@This() {
+    pub fn init(window: *engine_mod.Window) !@This() {
         const ctx = c.ImGui_CreateContext(null) orelse return error.ErrorCreatingImguiContext;
         errdefer c.ImGui_DestroyContext(ctx);
 
@@ -123,7 +124,7 @@ pub const GuiEngine = struct {
                 .color_attachment_count = 1,
                 .p_color_attachments = @ptrCast(&color_attachment_ref),
             };
-            const pass = try device.createRenderPass(&.{
+            var pass = try device.createRenderPass(&.{
                 .attachment_count = 1,
                 .p_attachments = @ptrCast(&color_attachment),
                 .subpass_count = 1,
@@ -167,14 +168,27 @@ pub const GuiEngine = struct {
             }, cmdbufs.ptr);
             errdefer device.freeCommandBuffers(cmd_pool, @intCast(cmdbufs.len), cmdbufs.ptr);
 
+            vulkan_init(engine, swapchain, &desc_pool, &pass);
+            errdefer vulkan_deinit();
+
+            return .{
+                .desc_pool = desc_pool,
+                .cmd_pool = cmd_pool,
+                .pass = pass,
+                .framebuffers = framebuffers,
+                .cmd_bufs = cmdbufs,
+            };
+        }
+
+        fn vulkan_init(engine: *Engine, swapchain: *Swapchain, desc_pool: *vk.DescriptorPool, pass: *vk.RenderPass) void {
             var info = c.ImGui_ImplVulkan_InitInfo{
                 .Instance = @as(*c.VkInstance, @ptrCast(&engine.graphics.instance.handle)).*,
                 .PhysicalDevice = @as(*c.VkPhysicalDevice, @ptrCast(&engine.graphics.pdev)).*,
                 .Device = @as(*c.VkDevice, @ptrCast(&engine.graphics.device.handle)).*,
                 .QueueFamily = engine.graphics.graphics_queue.family,
                 .Queue = @as(*c.VkQueue, @ptrCast(&engine.graphics.graphics_queue.handle)).*,
-                .DescriptorPool = @as(*c.VkDescriptorPool, @ptrCast(&desc_pool)).*,
-                .RenderPass = @as(*c.VkRenderPass, @ptrCast(@constCast(&pass))).*,
+                .DescriptorPool = @as(*c.VkDescriptorPool, @ptrCast(desc_pool)).*,
+                .RenderPass = @as(*c.VkRenderPass, @ptrCast(@constCast(pass))).*,
                 .MinImageCount = 2,
                 .ImageCount = @intCast(swapchain.swap_images.len),
                 // .MSAASamples: VkSampleCountFlagBits = @import("std").mem.zeroes(VkSampleCountFlagBits),
@@ -187,15 +201,10 @@ pub const GuiEngine = struct {
                 // .MinAllocationSize: VkDeviceSize = @import("std").mem.zeroes(VkDeviceSize),
             };
             _ = c.cImGui_ImplVulkan_Init(&info);
-            errdefer c.cImGui_ImplVulkan_Shutdown();
+        }
 
-            return .{
-                .desc_pool = desc_pool,
-                .cmd_pool = cmd_pool,
-                .pass = pass,
-                .framebuffers = framebuffers,
-                .cmd_bufs = cmdbufs,
-            };
+        fn vulkan_deinit() void {
+            c.cImGui_ImplVulkan_Shutdown();
         }
 
         pub fn render_start(_: *@This()) void {
@@ -245,12 +254,20 @@ pub const GuiEngine = struct {
             }
             defer c.cImGui_ImplVulkan_Shutdown();
         }
+
+        pub fn pre_reload(_: *@This()) void {
+            vulkan_deinit();
+        }
+
+        pub fn post_reload(self: *@This(), engine: *Engine, swapchain: *Swapchain) void {
+            vulkan_init(engine, swapchain, &self.desc_pool, &self.pass);
+        }
     };
 };
 
 fn enum_dropdown(enum_ptr: anytype, title: [*:0]const u8) void {
     const opt_modes = comptime blk: {
-        const fields = @typeInfo(@TypeOf(enum_ptr.*)).Enum.fields;
+        const fields = @typeInfo(@TypeOf(enum_ptr.*)).@"enum".fields;
         var arr: [fields.len][*:0]const u8 = undefined;
         for (fields, 0..) |field, i| {
             arr[i] = field.name;

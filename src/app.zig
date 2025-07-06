@@ -31,6 +31,8 @@ const DescriptorPool = render_utils.DescriptorPool;
 const DescriptorSet = render_utils.DescriptorSet;
 const CmdBuffer = render_utils.CmdBuffer;
 
+const world_mod = @import("world.zig");
+
 const main = @import("main.zig");
 const allocator = main.allocator;
 
@@ -254,7 +256,7 @@ pub const ResourceManager = struct {
         errdefer uniform_buf.deinit(device);
 
         var points_buffer = try Buffer.new_initialized(ctx, .{
-            .size = @sizeOf(f32) * 4 * v.max_points_x_64 * 64,
+            .size = v.max_points_x_64 * 64,
             .usage = .{ .storage_buffer_bit = true },
         }, [4]f32{ 0, 0, 0, 1 }, pool);
         errdefer points_buffer.deinit(device);
@@ -358,6 +360,7 @@ pub const ResourceManager = struct {
         params: Params,
 
         const Params = struct {
+            world_to_screen: math.Mat4x4,
             occlusion_color: Vec4,
             sparse_color: Vec4,
             background_color: Vec4,
@@ -692,8 +695,9 @@ pub const AppState = struct {
 
     monitor_rez: struct { width: u32, height: u32 },
     mouse: extern struct { x: i32 = 0, y: i32 = 0, left: bool = false, right: bool = false } = .{},
+    pos: Vec3,
     camera: math.Camera,
-    controller: CameraController = .{},
+    controller: world_mod.Components.Controller = .{},
 
     frame: u32 = 0,
     fps_cap: u32 = 500,
@@ -741,16 +745,6 @@ pub const AppState = struct {
     shader_fuse: Fuse = .{},
     arena: std.heap.ArenaAllocator,
 
-    const CameraController = struct {
-        pos: Vec3 = .{},
-        sensitivity: f32 = 0.1,
-        speed: f32 = 5,
-        pitch: f32 = 0,
-        yaw: f32 = 0,
-        did_move: bool = false,
-        did_rotate: bool = false,
-    };
-
     pub fn init(window: *engine_mod.Window, app: *App) !@This() {
         _ = app;
         const mouse = window.poll_mouse();
@@ -762,8 +756,9 @@ pub const AppState = struct {
         return .{
             .ticker = try .init(),
             .monitor_rez = .{ .width = sze.width, .height = sze.height },
-            .camera = math.Camera.init(math.Camera.constants.basis.opengl, math.Camera.constants.basis.vulkan),
-            .controller = .{ .pos = .{ .z = -5 } },
+            .camera = math.Camera.init(math.Camera.constants.basis.vulkan, math.Camera.constants.basis.opengl),
+            .pos = .{ .z = -5 },
+            .controller = .{},
             .mouse = .{ .x = mouse.x, .y = mouse.y, .left = mouse.left },
             .transforms = transform.sirpinski_pyramid(),
             .target_transforms = generator.generate(rng.random()),
@@ -832,15 +827,15 @@ pub const AppState = struct {
             }
             if (imgui_io.WantCaptureKeyboard) {}
 
-            if (kb.p.just_pressed()) {
-                try render_utils.dump_image_to_file(
-                    &app.screen_image,
-                    &engine.graphics,
-                    app.command_pool,
-                    window.extent,
-                    "images",
-                );
-            }
+            // if (kb.p.just_pressed()) {
+            //     try render_utils.dump_image_to_file(
+            //         &app.screen_image,
+            //         &engine.graphics,
+            //         app.command_pool,
+            //         window.extent,
+            //         "images",
+            //     );
+            // }
 
             if (mouse.left.just_pressed() and !self.focus) {
                 self.focus = true;
@@ -873,25 +868,38 @@ pub const AppState = struct {
             const mouse = &input.mouse;
             const kb = &input.keys;
 
-            self.controller.did_rotate = (mouse.dx != 0 or mouse.dy != 0);
-            if (self.controller.did_rotate) {
-                self.controller.yaw += @as(f32, @floatCast(mouse.dx)) * self.controller.sensitivity;
-                self.controller.pitch -= @as(f32, @floatCast(mouse.dy)) * self.controller.sensitivity;
-                self.controller.pitch = std.math.clamp(self.controller.pitch, -std.math.pi / 2.0 + 0.001, std.math.pi / 2.0 - 0.001);
+            const rot = self.camera.rot_quat(self.controller.pitch, self.controller.yaw);
+            const fwd = rot.rotate_vector(self.camera.world_basis.fwd);
+            const right = rot.rotate_vector(self.camera.world_basis.right);
+
+            var speed = self.controller.speed;
+            if (kb.shift.pressed()) {
+                speed *= 2.0;
+            }
+            if (kb.ctrl.pressed()) {
+                speed *= 0.1;
             }
 
-            const rot = self.camera.rot_quat(self.controller.pitch, self.controller.yaw);
-            var move_dir = Vec3{};
-            if (kb.w.pressed()) move_dir = move_dir.add(rot.rotate_vector(self.camera.world_basis.fwd));
-            if (kb.s.pressed()) move_dir = move_dir.add(rot.rotate_vector(self.camera.world_basis.fwd.scale(-1)));
-            if (kb.a.pressed()) move_dir = move_dir.add(rot.rotate_vector(self.camera.world_basis.right.scale(-1)));
-            if (kb.d.pressed()) move_dir = move_dir.add(rot.rotate_vector(self.camera.world_basis.right));
-            if (kb.shift.pressed()) move_dir = move_dir.add(rot.rotate_vector(self.camera.world_basis.up.scale(-1)));
-            if (kb.ctrl.pressed()) move_dir = move_dir.add(rot.rotate_vector(self.camera.world_basis.up));
+            if (kb.w.pressed()) {
+                self.pos = self.pos.add(fwd.scale(delta * speed));
+            }
+            if (kb.a.pressed()) {
+                self.pos = self.pos.sub(right.scale(delta * speed));
+            }
+            if (kb.s.pressed()) {
+                self.pos = self.pos.sub(fwd.scale(delta * speed));
+            }
+            if (kb.d.pressed()) {
+                self.pos = self.pos.add(right.scale(delta * speed));
+            }
 
-            self.controller.did_move = move_dir.dot(move_dir) > 0.0001;
-            if (self.controller.did_move) {
-                self.controller.pos = self.controller.pos.add(move_dir.normalize().scale(delta * self.controller.speed));
+            self.controller.did_move = kb.w.pressed() or kb.a.pressed() or kb.s.pressed() or kb.d.pressed();
+            self.controller.did_rotate = @abs(mouse.dx) + @abs(mouse.dy) > 0.0001;
+
+            if (self.controller.did_rotate) {
+                self.controller.yaw += @as(f32, @floatCast(mouse.dx)) * self.controller.sensitivity_scale * self.controller.sensitivity;
+                self.controller.pitch += @as(f32, @floatCast(mouse.dy)) * self.controller.sensitivity_scale * self.controller.sensitivity;
+                self.controller.pitch = std.math.clamp(self.controller.pitch, -std.math.pi / 2.0 + 0.001, std.math.pi / 2.0 - 0.001);
             }
         }
     }
@@ -909,7 +917,7 @@ pub const AppState = struct {
         resources.uniform = .{
             .transforms = self.transforms.build().transforms,
             .camera = .{
-                .eye = self.controller.pos,
+                .eye = self.pos,
                 .fwd = fwd,
                 .right = right,
                 .up = up,
@@ -935,6 +943,14 @@ pub const AppState = struct {
                 .monitor_height = @intCast(self.monitor_rez.height),
             },
             .params = .{
+                .world_to_screen = self.camera.world_to_screen_mat(.{
+                    .width = self.monitor_rez.width,
+                    .height = self.monitor_rez.height,
+                    .pos = self.pos,
+                    .pitch = self.controller.pitch,
+                    .yaw = self.controller.yaw,
+                    .far = 100.0,
+                }),
                 .occlusion_color = self.occlusion_color,
                 .sparse_color = self.sparse_color,
                 .background_color = self.background_color,
